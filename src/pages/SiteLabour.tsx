@@ -7,6 +7,7 @@ import {
 import { ACC } from '../lib/accounts';
 import { ledger, auditLog } from '../lib/ledger';
 import { cashAccountFor } from '../lib/postings';
+import { LABOUR_TYPES, detectLabourType } from '../lib/costImport';
 
 /* ---------- types and storage ---------- */
 
@@ -27,7 +28,9 @@ type PrintMode = { kind: 'week' } | { kind: 'day'; date: string };
 const STORE_KEY = 'ista-fortis-site-labour-v1';
 const PROJECTS_KEY = 'ista-fortis-projects-v1';
 const METHODS: Method[] = ['Cash', 'Mobile money', 'Bank transfer'];
-const CATEGORIES = ['Mason', 'Helper', 'Foreman', 'Carpenter', 'Steel fixer', 'Plumber', 'Electrician', 'Painter', 'Welder', 'Other'];
+/** Same labour types as Project Costs, so "Mason" and "Masons" never split the totals. */
+const canonicalType = (raw: string) => detectLabourType(raw) || raw.trim().replace(/\s+/g, ' ');
+const DEFAULT_TYPE = 'Helpers';
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -53,7 +56,7 @@ function loadStore(): Store {
     const raw = localStorage.getItem(STORE_KEY);
     const v = raw ? JSON.parse(raw) : null;
     return {
-      entries: Array.isArray(v?.entries) ? v.entries : [],
+      entries: Array.isArray(v?.entries) ? (v.entries as LabourEntry[]).map((e) => ({ ...e, category: canonicalType(e.category ?? '') })) : [],
       activities: v?.activities && typeof v.activities === 'object' ? v.activities : {},
     };
   } catch { return { entries: [], activities: {} }; }
@@ -345,7 +348,7 @@ export default function SiteLabour() {
     [...projectEntries].sort((a, b) => b.date.localeCompare(a.date)).forEach((e) => { if (!seen.has(norm(e.worker))) seen.set(norm(e.worker), e.worker); });
     return [...seen.values()];
   }, [projectEntries]);
-  const categoryOptions = useMemo(() => [...new Set([...CATEGORIES, ...store.entries.map((e) => e.category)])], [store.entries]);
+  const categoryOptions = useMemo(() => [...new Set([...LABOUR_TYPES, ...store.entries.map((e) => e.category)])], [store.entries]);
 
   const dayEntries = (date: string) => weekEntries.filter((e) => e.date === date);
   const activityOf = (date: string) => store.activities[dayKey(projectId, date)] ?? '';
@@ -358,17 +361,17 @@ export default function SiteLabour() {
 
   const openEditor = (date: string) => {
     const rows = rowsFor(date);
-    setEditor({ date, activity: activityOf(date), rows: rows.length ? rows : [{ key: newId('row'), worker: '', category: 'Helper', rate: 0 }] });
+    setEditor({ date, activity: activityOf(date), rows: rows.length ? rows : [{ key: newId('row'), worker: '', category: DEFAULT_TYPE, rate: 0 }] });
     setEditorError('');
   };
   const changeEditorDate = (date: string) => {
     if (!editor || !isValidIso(date)) { setEditor((ed) => (ed ? { ...ed, date } : ed)); return; }
     const rows = rowsFor(date);
-    setEditor({ date, activity: activityOf(date), rows: rows.length ? rows : [{ key: newId('row'), worker: '', category: 'Helper', rate: 0 }] });
+    setEditor({ date, activity: activityOf(date), rows: rows.length ? rows : [{ key: newId('row'), worker: '', category: DEFAULT_TYPE, rate: 0 }] });
   };
   const updateRow = (key: string, patch: Partial<DayRow>) =>
     setEditor((ed) => (ed ? { ...ed, rows: ed.rows.map((r) => (r.key === key ? { ...r, ...patch } : r)) } : ed));
-  const addRow = () => setEditor((ed) => (ed ? { ...ed, rows: [...ed.rows, { key: newId('row'), worker: '', category: 'Helper', rate: 0 }] } : ed));
+  const addRow = () => setEditor((ed) => (ed ? { ...ed, rows: [...ed.rows, { key: newId('row'), worker: '', category: DEFAULT_TYPE, rate: 0 }] } : ed));
   const removeRow = (key: string) => setEditor((ed) => (ed ? { ...ed, rows: ed.rows.filter((r) => r.key !== key) } : ed));
 
   /** Copies workers, categories and rates from the most recent earlier day on this project. */
@@ -409,11 +412,11 @@ export default function SiteLabour() {
         .map((e) => {
           if (e.paid) return e;
           const r = rows.find((x) => x.id === e.id);
-          return r ? { ...e, worker: r.worker.trim().replace(/\s+/g, ' '), category: r.category.trim(), rate: r.rate } : e;
+          return r ? { ...e, worker: r.worker.trim().replace(/\s+/g, ' '), category: canonicalType(r.category), rate: r.rate } : e;
         });
       const added = rows.filter((r) => !r.id).map((r, i): LabourEntry => ({
         id: newId('SL'), projectId, date: editor.date, worker: r.worker.trim().replace(/\s+/g, ' '),
-        category: r.category.trim(), rate: r.rate, createdAt: new Date(Date.parse(now) + i).toISOString(),
+        category: canonicalType(r.category), rate: r.rate, createdAt: new Date(Date.parse(now) + i).toISOString(),
       }));
       const activities = { ...old.activities };
       if (editor.activity.trim()) activities[dayKey(projectId, editor.date)] = editor.activity.trim();
@@ -565,7 +568,7 @@ export default function SiteLabour() {
                   const unpaid = sum(mine.filter((e) => !e.paid));
                   return (
                     <tr key={w.key}>
-                      <td className="left sticky sl-worker"><strong>{w.name}</strong><span className={w.category.toLowerCase() === 'mason' ? 'mason' : undefined}>{w.category}</span></td>
+                      <td className="left sticky sl-worker"><strong>{w.name}</strong><span className={w.category === 'Masons' ? 'mason' : undefined}>{w.category}</span></td>
                       {days.map((d) => {
                         const e = cellMap.get(`${w.key}|${d}`);
                         if (!e) return <td key={d}><span className="sl-none">—</span></td>;
@@ -624,7 +627,7 @@ export default function SiteLabour() {
               {editor.rows.map((r) => (
                 <div className="sl-row" key={r.key}>
                   <input className="sl-name" list="sl-workers" value={r.worker} disabled={!!r.paid} onChange={(e) => updateRow(r.key, { worker: e.target.value })} placeholder="Worker name" aria-label="Worker name" />
-                  <input list="sl-categories" value={r.category} disabled={!!r.paid} onChange={(e) => updateRow(r.key, { category: e.target.value })} placeholder="Category" aria-label="Labour category" />
+                  <input list="sl-categories" value={r.category} disabled={!!r.paid} onChange={(e) => updateRow(r.key, { category: e.target.value })} placeholder="e.g. Masons" aria-label="Labour category" />
                   <input type="number" min="1" step="1" value={r.rate || ''} disabled={!!r.paid} onChange={(e) => updateRow(r.key, { rate: Number(e.target.value) })} placeholder="Amount" aria-label="Pay for the day" />
                   {r.paid
                     ? <span className="sl-lock" title={`Paid by ${r.paid.method} on ${longDate(r.paid.date)}. Remove the payment from the sheet to change it.`}><Lock size={15} /></span>
