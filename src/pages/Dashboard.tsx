@@ -53,7 +53,7 @@ const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
 const pad = (n: number) => String(n).padStart(2, '0');
 const prettyDate = (iso: string) => {
   const [y, m, d] = iso.split('-').map(Number);
-  return Number.isFinite(y) && m >= 1 && m <= 12 ? `${pad(d)} ${MONTHS[m - 1]} ${y}` : iso;
+  return Number.isFinite(y) && m >= 1 && m <= 12 ? `${d} ${MONTHS[m - 1]} ${y}` : iso;
 };
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const nameList = (list: ProjectRow[]) =>
@@ -218,8 +218,8 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
           <section aria-labelledby="dash-portfolio">
             <div className="dash-section-head"><h3 id="dash-portfolio">Portfolio</h3><span>Projects register and invoice payments</span></div>
             <div className="dash-kpis cols-4">
-              <Kpi label="Total contract value" value={money(totalValue)} note={`${activeAll.length} active of ${plural(projects.length, 'project')}`} icon={Building2} tone="green" />
-              <Kpi label="Cash received" value={money(received)} note={`${receivedPct}% of contract value collected`} icon={Wallet} tone="blue" progress={receivedPct} />
+              <Kpi label="Total contract value" value={money(totalValue)} note={`${activeAll.length} active of ${plural(projects.length, 'project')}`} icon={Building2} tone="blue" />
+              <Kpi label="Cash received" value={money(received)} note={`${receivedPct}% of contract value collected`} icon={Wallet} tone="green" progress={receivedPct} />
               <Kpi label="Outstanding receivables" value={money(outstanding)} note={totalValue > 0 ? `${100 - receivedPct}% of contract value still to collect` : 'No contracts registered yet'} icon={CircleDollarSign} tone="amber" />
               <Kpi label="Active projects" value={String(activeAll.length)} note={`${projects.length - activeAll.length} completed, on hold or cancelled`} icon={Briefcase} tone="slate" />
             </div>
@@ -228,11 +228,11 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
           <section aria-labelledby="dash-ledger">
             <div className="dash-section-head"><h3 id="dash-ledger">Cash &amp; accounts</h3><span>From the general ledger</span></div>
             <div className="dash-kpis cols-3">
-              <Kpi label="Cash & bank" value={money(summary.cash)} note={summary.cash < 0 ? 'Opening balances not recorded yet' : 'Cash, bank and mobile money'} icon={Landmark} tone="blue" negative={summary.cash < 0} />
+              <Kpi label="Cash & bank" value={money(summary.cash)} note={summary.cash < 0 ? 'Opening balances not recorded yet' : 'Cash, bank and mobile money'} icon={Landmark} tone={summary.cash < 0 ? 'rose' : 'green'} negative={summary.cash < 0} />
               <Kpi label="Revenue to date" value={money(summary.revenue)} note="Invoices issued and other income" icon={TrendingUp} tone="green" />
               <Kpi label="Unpaid invoices" value={money(summary.receivables)} note="Invoiced, awaiting payment" icon={CircleDollarSign} tone="amber" />
-              <Kpi label="Recorded expenses" value={money(summary.expenses)} note="Project costs, payroll and other" icon={TrendingDown} tone="rose" />
-              <Kpi label="Supplier payables" value={money(summary.payables)} note="Costs recorded, not yet paid" icon={ReceiptText} tone="rose" />
+              <Kpi label="Recorded expenses" value={money(summary.expenses)} note="Project costs, payroll and other" icon={TrendingDown} tone="blue" />
+              <Kpi label="Supplier payables" value={money(summary.payables)} note="Costs recorded, not yet paid" icon={ReceiptText} tone="amber" />
               <Kpi label="Net result" value={money(net)} note="Revenue minus expenses to date" icon={Banknote} tone={net < 0 ? 'rose' : 'green'} negative={net < 0} />
             </div>
           </section>
