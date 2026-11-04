@@ -5,6 +5,7 @@ import Sidebar from "./components/Sidebar";
 import Dashboard from "./pages/Dashboard";
 import Projects from "./pages/Projects";
 import ProjectCosts from "./pages/ProjectCosts";
+import SiteLabour from "./pages/SiteLabour";
 import Invoices from "./pages/Invoices";
 import StaffPayroll from "./pages/StaffPayroll";
 import Income from "./pages/Income";
@@ -17,6 +18,7 @@ type Page =
   | "Dashboard"
   | "Projects"
   | "Project Costs"
+  | "Site Labour"
   | "Client Invoices"
   | "Income"
   | "Expenses"
@@ -46,6 +48,9 @@ function App() {
 
       case "Project Costs":
         return <ProjectCosts />;
+
+      case "Site Labour":
+        return <SiteLabour />;
 
       case "Client Invoices":
         return <Invoices />;
