@@ -23,6 +23,7 @@ type CostForm = Omit<ProjectCost, 'id' | 'reversed' | 'reversedAt' | 'createdAt'
 
 const COSTS_KEY = 'ista-fortis-project-costs-v1';
 const PROJECTS_KEY = 'ista-fortis-projects-v1';
+const SITE_LABOUR_KEY = 'ista-fortis-site-labour-v1';
 const categories: CostCategory[] = ['Labour', 'Materials', 'Equipment', 'Transport', 'Site expenses', 'Other'];
 const methods: PaymentMethod[] = ['Cash', 'Bank transfer', 'Mobile money', 'Cheque', 'Other'];
 const blankForm: CostForm = { projectId: '', projectName: '', date: new Date().toISOString().slice(0, 10), category: 'Materials', labourType: '', description: '', supplier: '', amount: 0, amountPaid: 0, paymentMethod: 'Bank transfer', reference: '', notes: '' };
@@ -32,6 +33,9 @@ const PREVIEW_LIMIT = 200;
 const money = (n: number) => new Intl.NumberFormat('en-RW', { style: 'currency', currency: 'RWF', maximumFractionDigits: 0 }).format(Number.isFinite(n) ? n : 0);
 
 function loadCosts(): ProjectCost[] { try { const raw = localStorage.getItem(COSTS_KEY); return raw ? JSON.parse(raw) as ProjectCost[] : []; } catch { return []; } }
+/** Worker-days recorded on the Site Labour page (read only here; that page posts them to the ledger when paid). */
+type SiteLabourDay = { projectId: string; rate: number; paid?: unknown };
+function loadSiteLabour(): SiteLabourDay[] { try { const raw = localStorage.getItem(SITE_LABOUR_KEY); const v = raw ? JSON.parse(raw) : null; return Array.isArray(v?.entries) ? v.entries as SiteLabourDay[] : []; } catch { return []; } }
 function loadProjects(): ProjectOption[] { try { const raw = localStorage.getItem(PROJECTS_KEY); return raw ? JSON.parse(raw) as ProjectOption[] : []; } catch { return []; } }
 
 function paymentStatusOf(cost: ProjectCost): PaymentStatus {
@@ -142,6 +146,7 @@ const COSTS_CSS = `
 export default function ProjectCosts() {
   const [costs, setCosts] = useState<ProjectCost[]>(loadCosts);
   const [projects] = useState<ProjectOption[]>(loadProjects);
+  const [siteLabour] = useState<SiteLabourDay[]>(loadSiteLabour);
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<CostForm>(blankForm);
   const [search, setSearch] = useState('');
@@ -177,29 +182,47 @@ export default function ProjectCosts() {
   }, []);
 
   const activeCosts = costs.filter(c => !c.reversed);
+
+  // Site labour per project: everything recorded on the Site Labour page, paid or awaiting payment.
+  const siteByProject = useMemo(() => {
+    const map = new Map<string, { days: number; total: number; paid: number }>();
+    siteLabour.forEach(d => {
+      const rate = Number(d.rate) || 0;
+      const row = map.get(d.projectId) ?? { days: 0, total: 0, paid: 0 };
+      row.days += 1; row.total += rate; if (d.paid) row.paid += rate;
+      map.set(d.projectId, row);
+    });
+    return map;
+  }, [siteLabour]);
+  const site = useMemo(() => [...siteByProject.values()].reduce((s, r) => ({ days: s.days + r.days, total: s.total + r.total, paid: s.paid + r.paid }), { days: 0, total: 0, paid: 0 }), [siteByProject]);
   const usedLabourTypes = useMemo(() => [...new Set(costs.map(c => c.labourType ?? '').filter(Boolean))].sort(), [costs]);
   const labourOptions = useMemo(() => [...new Set([...LABOUR_TYPES, ...usedLabourTypes])], [usedLabourTypes]);
   const totals = useMemo(() => ({
-    total: activeCosts.reduce((s, c) => s + c.amount, 0),
-    paid: activeCosts.reduce((s, c) => s + c.amountPaid, 0),
-    payable: activeCosts.reduce((s, c) => s + Math.max(c.amount - c.amountPaid, 0), 0),
+    total: activeCosts.reduce((s, c) => s + c.amount, 0) + site.total,
+    paid: activeCosts.reduce((s, c) => s + c.amountPaid, 0) + site.paid,
+    payable: activeCosts.reduce((s, c) => s + Math.max(c.amount - c.amountPaid, 0), 0) + (site.total - site.paid),
     count: activeCosts.length,
-    projectsWithCosts: new Set(activeCosts.map(c => c.projectId)).size,
-  }), [costs]);
+    projectsWithCosts: new Set([...activeCosts.map(c => c.projectId), ...siteByProject.keys()]).size,
+  }), [costs, site, siteByProject]);
 
   const paidPct = totals.total > 0 ? Math.round((totals.paid / totals.total) * 100) : 0;
 
   // Total cost per project (active costs only). Registered projects with no costs show as zero.
   const byProject = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; count: number; total: number; paid: number }>();
-    projects.forEach(p => map.set(p.id, { id: p.id, name: p.projectName, count: 0, total: 0, paid: 0 }));
+    const map = new Map<string, { id: string; name: string; count: number; total: number; paid: number; siteDays: number; site: number }>();
+    projects.forEach(p => map.set(p.id, { id: p.id, name: p.projectName, count: 0, total: 0, paid: 0, siteDays: 0, site: 0 }));
     costs.filter(c => !c.reversed).forEach(c => {
-      const row = map.get(c.projectId) ?? { id: c.projectId, name: c.projectName, count: 0, total: 0, paid: 0 };
+      const row = map.get(c.projectId) ?? { id: c.projectId, name: c.projectName, count: 0, total: 0, paid: 0, siteDays: 0, site: 0 };
       row.count += 1; row.total += c.amount; row.paid += c.amountPaid;
       map.set(c.projectId, row);
     });
+    siteByProject.forEach((s, projectId) => {
+      const row = map.get(projectId) ?? { id: projectId, name: projectId, count: 0, total: 0, paid: 0, siteDays: 0, site: 0 };
+      row.siteDays = s.days; row.site = s.total; row.total += s.total; row.paid += s.paid;
+      map.set(projectId, row);
+    });
     return [...map.values()].sort((a, b) => b.total - a.total);
-  }, [costs, projects]);
+  }, [costs, projects, siteByProject]);
 
   const visibleCosts = useMemo(() => costs.filter(c => {
     if (c.reversed !== showReversed) return false;
@@ -322,23 +345,23 @@ export default function ProjectCosts() {
     {notice && <div className="projects-import-notice" role="status"><span>{notice}</span><button onClick={() => setNotice('')} aria-label="Dismiss"><X size={15} /></button></div>}
 
     <div className="pj-kpis">
-      <Metric title="Total recorded costs" value={money(totals.total)} note={`${totals.count} active cost record${totals.count === 1 ? '' : 's'}`} icon={<TrendingDown size={13} />} tone="rose" />
+      <Metric title="Total recorded costs" value={money(totals.total)} note={`${totals.count} cost record${totals.count === 1 ? '' : 's'}${site.days ? ` + ${site.days} site labour day${site.days === 1 ? '' : 's'}` : ''}`} icon={<TrendingDown size={13} />} tone="rose" />
       <Metric title="Amount paid" value={money(totals.paid)} note={totals.total > 0 ? `${paidPct}% of recorded costs disbursed` : 'Cash already disbursed'} icon={<Wallet size={13} />} tone="green" />
-      <Metric title="Outstanding payables" value={money(totals.payable)} note="Recorded costs not yet paid" icon={<Receipt size={13} />} tone="amber" />
+      <Metric title="Outstanding payables" value={money(totals.payable)} note={site.total - site.paid > 0 ? `Includes ${money(site.total - site.paid)} site labour awaiting payment` : 'Recorded costs not yet paid'} icon={<Receipt size={13} />} tone="amber" />
       <Metric title="Projects with costs" value={String(totals.projectsWithCosts)} note={`Out of ${projects.length} registered project${projects.length === 1 ? '' : 's'}`} icon={<FolderKanban size={13} />} tone="blue" />
     </div>
 
     {byProject.length > 0 && <div className="panel projects-register">
       <div className="panel-heading projects-heading">
-        <div><h3>Cost by project</h3><p>Click a project to filter the register below.</p></div>
+        <div><h3>Cost by project</h3><p>Click a project to filter the register below.{site.days > 0 && ' Totals include site labour from the Site Labour page, paid and awaiting payment.'}</p></div>
       </div>
       <div className="projects-table-wrap">
         <table className="projects-table cost-by-project">
           <thead><tr><th>Project</th><th>Records</th><th>Total cost</th><th>Paid</th><th>Outstanding</th></tr></thead>
           <tbody>{byProject.map(p => <tr key={p.id} className={projectFilter === p.id ? 'is-selected' : undefined} onClick={() => { setProjectFilter(p.id); setShowReversed(false); }}>
             <td><strong>{p.name}</strong><span className="cost-sub">{p.id}</span></td>
-            <td>{p.count}</td>
-            <td className="money-cell"><strong>{money(p.total)}</strong></td>
+            <td>{p.count}{p.siteDays > 0 && <span className="cost-sub">+ {p.siteDays} labour day{p.siteDays === 1 ? '' : 's'}</span>}</td>
+            <td className="money-cell"><strong>{money(p.total)}</strong>{p.site > 0 && <span className="cost-sub">incl. {money(p.site)} site labour</span>}</td>
             <td className="money-cell">{money(p.paid)}</td>
             <td className="money-cell">{money(p.total - p.paid)}</td>
           </tr>)}</tbody>
