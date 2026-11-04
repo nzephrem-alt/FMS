@@ -101,8 +101,8 @@ function postPaidDay(e: LabourEntry, paid: PaidInfo) {
       idempotencyKey: `site_labour_payment:${e.id}:${paid.paymentId}`,
       reference: `Site labour ${e.date}`,
       lines: [
-        { account: ACC.payables, debit: e.rate, party: e.worker, memo: `Site labour ${e.date}` },
-        { account: cashAccountFor(paid.method), credit: e.rate, memo: paid.method },
+        { account: ACC.payables, debit: e.rate, party: e.worker, projectId: e.projectId, memo: `Site labour ${e.date}` },
+        { account: cashAccountFor(paid.method), credit: e.rate, projectId: e.projectId, memo: paid.method },
       ],
     });
   } catch (err) {
