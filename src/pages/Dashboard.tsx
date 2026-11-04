@@ -7,7 +7,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts';
 import { ACC, getAccount, isDirectCost } from '../lib/accounts';
-import { syncStoredProjectCosts } from '../lib/postings';
+import { syncStoredInvoices, syncStoredProjectCosts } from '../lib/postings';
 import { useLedgerEntries } from '../lib/useLedger';
 import type { JournalEntry } from '../lib/ledger';
 
@@ -20,7 +20,7 @@ type ProjectRow = {
   totalReceived: number; status: string; currentPhase?: string;
 };
 type InvoiceRow = {
-  invoiceNumber: string; client: string; amount: number; dueDate: string;
+  invoiceNumber: string; client: string; amount: number; dueDate: string; projectId?: string;
   voided?: boolean; payments?: { amount: number }[];
 };
 type Tone = 'green' | 'blue' | 'amber' | 'rose' | 'slate';
@@ -99,18 +99,30 @@ function Kpi({ label, value, note, icon: Icon, tone, progress, negative }: {
 function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
   const go = (page: string) => onNavigate?.(page);
 
-  // Make sure costs recorded before the ledger existed are in the ledger.
-  useEffect(() => { syncStoredProjectCosts(); }, []);
+  // Make sure costs and invoices recorded before the ledger existed are in the ledger.
+  useEffect(() => { syncStoredProjectCosts(); syncStoredInvoices(); }, []);
 
   const entries = useLedgerEntries();
   const projects = useMemo(() => readList<ProjectRow>(PROJECTS_KEY), []);
   const invoices = useMemo(() => readList<InvoiceRow>(INVOICES_KEY), []);
 
-  // Portfolio figures come from the Projects register (they include money received before this system).
+  // Cash received per project = money received before this system (Projects register)
+  // + client payments recorded on its invoices. Same rule as the Projects page.
+  const invoiceReceipts = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const inv of invoices) {
+      if (inv.voided || !inv.projectId) continue;
+      totals[inv.projectId] = (totals[inv.projectId] ?? 0) + (inv.payments ?? []).reduce((s, p) => s + num(p.amount), 0);
+    }
+    return totals;
+  }, [invoices]);
+  const receivedOf = (p: ProjectRow) => num(p.totalReceived) + (invoiceReceipts[p.id] ?? 0);
+
+  // Portfolio figures come from the Projects register plus invoice payments.
   const counted = projects.filter(p => p.status !== 'Cancelled');
   const totalValue = counted.reduce((s, p) => s + num(p.contractValue), 0);
-  const received = counted.reduce((s, p) => s + num(p.totalReceived), 0);
-  const outstanding = counted.reduce((s, p) => s + Math.max(num(p.contractValue) - num(p.totalReceived), 0), 0);
+  const received = counted.reduce((s, p) => s + receivedOf(p), 0);
+  const outstanding = counted.reduce((s, p) => s + Math.max(num(p.contractValue) - receivedOf(p), 0), 0);
   const activeAll = projects.filter(p => p.status === 'Active');
   const activeProjects = [...activeAll].sort((a, b) => num(b.contractValue) - num(a.contractValue)).slice(0, 5);
   const receivedPct = totalValue > 0 ? Math.min(Math.round((received / totalValue) * 100), 100) : 0;
@@ -161,11 +173,11 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
   if (overdue.length) {
     alerts.push({ key: 'overdue', level: 'warn', title: `${plural(overdue.length, 'overdue invoice')}`, detail: `${money(overdue.reduce((s, x) => s + x.balance, 0))} is past its due date`, page: 'Client Invoices' });
   }
-  const noReceipts = activeAll.filter(p => num(p.contractValue) > 0 && num(p.totalReceived) === 0);
+  const noReceipts = activeAll.filter(p => num(p.contractValue) > 0 && receivedOf(p) === 0);
   if (noReceipts.length) {
     alerts.push({ key: 'noreceipts', level: 'warn', title: `${plural(noReceipts.length, 'active project')} with no payment received`, detail: nameList(noReceipts), page: 'Projects' });
   }
-  const overspent = counted.filter(p => (summary.costs[p.id] ?? 0) > num(p.totalReceived));
+  const overspent = counted.filter(p => (summary.costs[p.id] ?? 0) > receivedOf(p));
   if (overspent.length) {
     alerts.push({ key: 'overspent', level: 'warn', title: `Recorded costs exceed cash received on ${plural(overspent.length, 'project')}`, detail: nameList(overspent), page: 'Project Costs' });
   }
@@ -204,7 +216,7 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
       <div className="dash-layout">
         <div className="dash-primary">
           <section aria-labelledby="dash-portfolio">
-            <div className="dash-section-head"><h3 id="dash-portfolio">Portfolio</h3><span>From the Projects register</span></div>
+            <div className="dash-section-head"><h3 id="dash-portfolio">Portfolio</h3><span>Projects register and invoice payments</span></div>
             <div className="dash-kpis cols-4">
               <Kpi label="Total contract value" value={money(totalValue)} note={`${activeAll.length} active of ${plural(projects.length, 'project')}`} icon={Building2} tone="green" />
               <Kpi label="Cash received" value={money(received)} note={`${receivedPct}% of contract value collected`} icon={Wallet} tone="blue" progress={receivedPct} />
@@ -217,11 +229,11 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
             <div className="dash-section-head"><h3 id="dash-ledger">Cash &amp; accounts</h3><span>From the general ledger</span></div>
             <div className="dash-kpis cols-3">
               <Kpi label="Cash & bank" value={money(summary.cash)} note={summary.cash < 0 ? 'Opening balances not recorded yet' : 'Cash, bank and mobile money'} icon={Landmark} tone="blue" negative={summary.cash < 0} />
-              <Kpi label="Invoiced to clients" value={money(summary.revenue)} note="Invoices issued to date" icon={TrendingUp} tone="green" />
+              <Kpi label="Revenue to date" value={money(summary.revenue)} note="Invoices issued and other income" icon={TrendingUp} tone="green" />
               <Kpi label="Unpaid invoices" value={money(summary.receivables)} note="Invoiced, awaiting payment" icon={CircleDollarSign} tone="amber" />
               <Kpi label="Recorded expenses" value={money(summary.expenses)} note="Project costs, payroll and other" icon={TrendingDown} tone="rose" />
               <Kpi label="Supplier payables" value={money(summary.payables)} note="Costs recorded, not yet paid" icon={ReceiptText} tone="rose" />
-              <Kpi label="Net result" value={money(net)} note="Invoiced minus expenses to date" icon={Banknote} tone={net < 0 ? 'rose' : 'green'} negative={net < 0} />
+              <Kpi label="Net result" value={money(net)} note="Revenue minus expenses to date" icon={Banknote} tone={net < 0 ? 'rose' : 'green'} negative={net < 0} />
             </div>
           </section>
 
@@ -251,7 +263,7 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
               ) : (
                 <div className="dash-empty">No income or expenses recorded for {year} yet.<br />Issue an invoice or record a cost and it will appear here.</div>
               )}
-              <p className="dash-chart-note">Income is invoices issued. Expenses are project costs, payroll and other recorded expenses. Hover a month for full amounts.</p>
+              <p className="dash-chart-note">Income is revenue earned (invoices issued and other income). Expenses are project costs, payroll and other recorded expenses. Hover a month for full amounts.</p>
             </div>
 
             <div className="dash-analysis">
@@ -276,8 +288,8 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
                   <tbody>
                     {activeProjects.map(p => {
                       const contract = num(p.contractValue);
-                      const pct = contract > 0 ? Math.min(Math.round((num(p.totalReceived) / contract) * 100), 100) : 0;
-                      const left = Math.max(contract - num(p.totalReceived), 0);
+                      const pct = contract > 0 ? Math.min(Math.round((receivedOf(p) / contract) * 100), 100) : 0;
+                      const left = Math.max(contract - receivedOf(p), 0);
                       return (
                         <tr key={p.id} onClick={() => go('Projects')}>
                           <td>
@@ -356,7 +368,7 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
         </aside>
       </div>
 
-      <p className="dash-source-note"><span className="demo-dot" /> Portfolio figures come from the Projects register. Cash, income, expenses and balances come from the general ledger.</p>
+      <p className="dash-source-note"><span className="demo-dot" /> Portfolio figures come from the Projects register plus client payments on invoices. Cash, income, expenses and balances come from the general ledger.</p>
     </div>
   );
 }
