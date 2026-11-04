@@ -167,5 +167,120 @@ export function postPayrollPayment(p: PayrollPosting, ledger: Ledger = defaultLe
 
 /** Posts the reversing entry for a payroll payment. Does nothing if it was never posted or is already reversed. */
 export function reversePayrollPayment(paymentId: string, reason = 'Payment removed', ledger: Ledger = defaultLedger) {
-  ledger.activeBySource('payroll', paymentId).forEach((e) => ledger.reverse(e.id, reason));
+  // Reverse on the original date: a corrected or removed salary payment should change the
+  // month it was paid in, not the month the correction was made.
+  ledger.activeBySource('payroll', paymentId).forEach((e) => ledger.reverse(e.id, reason, e.date));
+}
+/* ---------- Client invoices ---------- */
+
+/** The fields of a Client Invoices record that the ledger needs. */
+export type InvoiceLike = {
+  id: string;
+  invoiceNumber: string;
+  projectId: string;
+  client: string;
+  description: string;
+  issueDate: string;
+  amount: number;
+  voided?: boolean;
+  payments?: InvoicePaymentLike[];
+};
+
+export type InvoicePaymentLike = {
+  id: string;
+  amount: number;
+  date: string;
+  method: string;
+  reference?: string;
+};
+
+const INVOICES_KEY = 'ista-fortis-invoices-v1';
+
+/** Invoice issued: debit Accounts Receivable (client); credit Contract Revenue. */
+export function postClientInvoice(inv: InvoiceLike, ledger: Ledger = defaultLedger) {
+  const amount = Math.round(inv.amount);
+  const memo = inv.description || `Invoice ${inv.invoiceNumber}`;
+  return ledger.post({
+    date: inv.issueDate,
+    description: `Invoice ${inv.invoiceNumber} · ${inv.client}`,
+    sourceType: 'client_invoice',
+    sourceId: inv.id,
+    idempotencyKey: `client_invoice:${inv.id}`,
+    reference: inv.invoiceNumber,
+    lines: [
+      { account: ACC.receivables, debit: amount, party: inv.client, projectId: inv.projectId || undefined, memo },
+      { account: ACC.contractRevenue, credit: amount, party: inv.client, projectId: inv.projectId || undefined, memo },
+    ],
+  });
+}
+
+/** Client payment received: debit cash/bank/mobile money; credit Accounts Receivable (client). */
+export function postClientPayment(inv: InvoiceLike, p: InvoicePaymentLike, ledger: Ledger = defaultLedger) {
+  const amount = Math.round(p.amount);
+  return ledger.post({
+    date: p.date,
+    description: `Payment for invoice ${inv.invoiceNumber} · ${inv.client}`,
+    sourceType: 'client_payment',
+    sourceId: inv.id,
+    idempotencyKey: `client_payment:${inv.id}:${p.id}`,
+    reference: p.reference || inv.invoiceNumber,
+    lines: [
+      { account: cashAccountFor(p.method), debit: amount, projectId: inv.projectId || undefined, memo: p.method },
+      { account: ACC.receivables, credit: amount, party: inv.client, projectId: inv.projectId || undefined, memo: `Invoice ${inv.invoiceNumber}` },
+    ],
+  });
+}
+
+/**
+ * Voids an invoice in the ledger. Blocked while client payments are active.
+ * The reversal is dated on the invoice's own date, because a voided invoice is treated
+ * everywhere else in the app as if it had never been issued.
+ */
+export function reverseClientInvoice(invoiceId: string, reason = 'Invoice voided', ledger: Ledger = defaultLedger) {
+  if (ledger.activeBySource('client_payment', invoiceId).length > 0) {
+    throw new Error('This invoice has payments recorded against it. Reverse those payments first.');
+  }
+  ledger.activeBySource('client_invoice', invoiceId).forEach((e) => ledger.reverse(e.id, reason, e.date));
+}
+
+/**
+ * Posts every saved invoice and payment that is not in the ledger yet. Safe to run repeatedly:
+ * each record has its own idempotency key, so nothing is posted twice. Voided invoices are
+ * skipped if they were never posted, and reversed if they were.
+ */
+export function backfillInvoices(invoices: InvoiceLike[], ledger: Ledger = defaultLedger) {
+  let posted = 0;
+  let failed = 0;
+  const count = () => ledger.getEntries().length;
+  for (const inv of invoices) {
+    try {
+      if (inv.voided) {
+        const before = count();
+        reverseClientInvoice(inv.id, 'Invoice voided', ledger);
+        posted += count() - before;
+        continue;
+      }
+      const before = count();
+      postClientInvoice(inv, ledger);
+      for (const p of inv.payments ?? []) postClientPayment(inv, p, ledger);
+      posted += count() - before;
+    } catch (e) {
+      failed += 1;
+      console.error(`Could not post invoice ${inv.invoiceNumber} to the ledger:`, e);
+    }
+  }
+  return { posted, failed };
+}
+
+/** Reads the saved Client Invoices and posts any invoice or payment not in the ledger yet. */
+export function syncStoredInvoices(ledger: Ledger = defaultLedger): { posted: number; failed: number } {
+  let invoices: InvoiceLike[] = [];
+  try {
+    const raw = localStorage.getItem(INVOICES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    invoices = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return { posted: 0, failed: 0 };
+  }
+  return backfillInvoices(invoices, ledger);
 }
