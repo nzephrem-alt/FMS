@@ -13,6 +13,7 @@ import {
   MoreHorizontal,
   HardHat,
   FileText,
+  ClipboardList,
 } from 'lucide-react';
 
 type SidebarProps = {
@@ -29,6 +30,7 @@ const navGroups = [
       { label: 'Dashboard', icon: LayoutDashboard },
       { label: 'Projects', icon: Building2 },
       { label: 'Project Costs', icon: HardHat },
+      { label: 'Site Labour', icon: ClipboardList },
       { label: 'Client Invoices', icon: FileText },
       { label: 'Income', icon: Wallet },
       { label: 'Expenses', icon: ReceiptText },
