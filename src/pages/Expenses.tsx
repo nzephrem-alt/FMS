@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { ACC } from '../lib/accounts';
 import { ledger, type JournalEntry, type JournalLineInput } from '../lib/ledger';
+import { formatDate } from '../lib/format';
 
 const STORAGE_KEY = 'ista-fortis-expenses-v1';
 
@@ -612,7 +613,7 @@ export default function Expenses() {
           label="Total expenses"
           value={money(totalExpenses)}
           note={`${expenses.length} expense record${expenses.length === 1 ? '' : 's'}`}
-          tone="rose"
+          tone="blue"
         />
         <Metric
           icon={<Wallet size={13} />}
@@ -750,7 +751,7 @@ export default function Expenses() {
                         <strong>{expense.description}</strong>
                         <span className="exp-sub">{expense.expenseNumber}</span>
                       </td>
-                      <td className="money-cell">{expense.date}</td>
+                      <td className="money-cell">{formatDate(expense.date)}</td>
                       <td>{expense.category}</td>
                       <td>{expense.supplier || '—'}</td>
                       <td className="money-cell">{money(expense.amount)}</td>
@@ -1094,7 +1095,7 @@ export default function Expenses() {
           </span>
 
           <div className="project-detail-grid">
-            <Detail label="Date" value={selectedExpense.date} />
+            <Detail label="Date" value={formatDate(selectedExpense.date)} />
             <Detail label="Category" value={selectedExpense.category} />
             <Detail label="Supplier" value={selectedExpense.supplier || '—'} />
             <Detail label="Total amount" value={money(selectedExpense.amount)} />
@@ -1131,7 +1132,7 @@ export default function Expenses() {
                 <tbody>
                   {selectedExpense.payments.map((payment) => (
                     <tr key={payment.id}>
-                      <td className="money-cell">{payment.date}</td>
+                      <td className="money-cell">{formatDate(payment.date)}</td>
                       <td>{payment.method}</td>
                       <td>{payment.reference || '—'}</td>
                       <td className="money-cell">
