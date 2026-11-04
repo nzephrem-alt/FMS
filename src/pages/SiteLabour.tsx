@@ -20,7 +20,7 @@ type LabourEntry = {
 };
 type Store = { entries: LabourEntry[]; activities: Record<string, string> };
 type ProjectOption = { id: string; projectName: string; client?: string };
-type DayRow = { key: string; id?: string; worker: string; category: string; rate: number; paid?: PaidInfo };
+type DayRow = { key: string; id?: string; worker: string; category: string; rate: number; paid?: PaidInfo; customType?: boolean };
 type Editor = { date: string; activity: string; rows: DayRow[] };
 type PayDialog = { ids: string[]; method: Method; date: string };
 type PrintMode = { kind: 'week' } | { kind: 'day'; date: string };
@@ -216,6 +216,11 @@ const LABOUR_CSS = `
 .projects-module .sl-row{display:grid;grid-template-columns:1fr 150px 130px 38px;gap:8px;align-items:center}
 .projects-module .sl-row input{width:100%;box-sizing:border-box;height:38px;padding:0 10px;border:1px solid #e5eaec;border-radius:10px;background:#fff;color:var(--ink);font:inherit;font-size:12.5px}
 .projects-module .sl-row input:disabled{background:#f4f7f5;color:#5a6a61}
+.projects-module .sl-row select{width:100%;box-sizing:border-box;height:38px;padding:0 8px;border:1px solid #e5eaec;border-radius:10px;background:#fff;color:var(--ink);font:inherit;font-size:12.5px}
+.projects-module .sl-row select:disabled{background:#f4f7f5;color:#5a6a61}
+.projects-module .sl-type{display:flex;gap:4px;min-width:0}
+.projects-module .sl-type input{flex:1;min-width:0}
+.projects-module .sl-type button{flex:0 0 auto;width:30px;height:38px;border:1px solid #e5eaec;border-radius:10px;background:#fff;color:#4f5d55;display:grid;place-items:center;cursor:pointer}
 .projects-module .sl-row-head{font-size:11px;font-weight:500;color:#8a968f}
 .projects-module .sl-remove{width:38px;height:38px;border:1px solid var(--line);background:#fff;border-radius:10px;display:grid;place-items:center;color:#b04a58;cursor:pointer}
 .projects-module .sl-remove:hover:not(:disabled){background:#fbd6db}
@@ -627,7 +632,18 @@ export default function SiteLabour() {
               {editor.rows.map((r) => (
                 <div className="sl-row" key={r.key}>
                   <input className="sl-name" list="sl-workers" value={r.worker} disabled={!!r.paid} onChange={(e) => updateRow(r.key, { worker: e.target.value })} placeholder="Worker name" aria-label="Worker name" />
-                  <input list="sl-categories" value={r.category} disabled={!!r.paid} onChange={(e) => updateRow(r.key, { category: e.target.value })} placeholder="e.g. Masons" aria-label="Labour category" />
+                  {r.customType ? (
+                    <span className="sl-type">
+                      <input value={r.category} autoFocus onChange={(e) => updateRow(r.key, { category: e.target.value })} placeholder="Type the labour type" aria-label="Labour category" />
+                      <button type="button" onClick={() => updateRow(r.key, { customType: false, category: DEFAULT_TYPE })} title="Back to the list" aria-label="Back to the list"><X size={13} /></button>
+                    </span>
+                  ) : (
+                    <select value={r.category} disabled={!!r.paid} aria-label="Labour category"
+                      onChange={(e) => (e.target.value === '__other' ? updateRow(r.key, { customType: true, category: '' }) : updateRow(r.key, { category: e.target.value }))}>
+                      {[...new Set([...categoryOptions, r.category].filter(Boolean))].map((c) => <option key={c} value={c}>{c}</option>)}
+                      <option value="__other">Other (type your own)…</option>
+                    </select>
+                  )}
                   <input type="number" min="1" step="1" value={r.rate || ''} disabled={!!r.paid} onChange={(e) => updateRow(r.key, { rate: Number(e.target.value) })} placeholder="Amount" aria-label="Pay for the day" />
                   {r.paid
                     ? <span className="sl-lock" title={`Paid by ${r.paid.method} on ${longDate(r.paid.date)}. Remove the payment from the sheet to change it.`}><Lock size={15} /></span>
@@ -635,7 +651,6 @@ export default function SiteLabour() {
                 </div>
               ))}
               <datalist id="sl-workers">{knownWorkers.map((n) => <option key={n} value={n} />)}</datalist>
-              <datalist id="sl-categories">{categoryOptions.map((c) => <option key={c} value={c} />)}</datalist>
             </div>
 
             <div className="sl-editor-tools">
