@@ -204,9 +204,38 @@ const REPORTS_CSS = `
 .projects-module .rep-empty{padding:40px 20px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.7}
 .projects-module .rep-source{margin:0;font-size:11.5px;color:var(--muted)}
 
+/* keep text left-aligned even where older global rep-* rules say otherwise */
+.projects-module .welcome-row>div:first-child,.projects-module .rep-card-head,.projects-module .rep-hint,.projects-module .rep-note,.projects-module .rep-source,.projects-module .rep-empty-left{text-align:left}
+
 @media(max-width:1100px){.pj-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:420px){.pj-kpis{grid-template-columns:1fr}}
-@media(max-width:600px){.projects-module .rep-table th,.projects-module .rep-table td{padding-left:14px;padding-right:14px}.projects-module .rep-field select,.projects-module .rep-field input{min-width:0;width:100%}.projects-module .rep-field{flex:1 1 140px}}
+
+/* phones */
+@media(max-width:640px){
+.projects-module{gap:16px}
+.projects-module .welcome-row{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:14px;text-align:left}
+.projects-module .welcome-row>div:first-child{width:100%;margin:0}
+.projects-module .welcome-row h2{font-size:24px}
+.projects-module .rep-actions{width:100%;margin:0;justify-content:stretch}
+.projects-module .rep-actions>button{flex:1 1 0;justify-content:center}
+.projects-module .rep-controls{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px}
+.projects-module .rep-field{min-width:0;width:auto;margin:0}
+.projects-module .rep-field:first-child,.projects-module .rep-hint{grid-column:1/-1}
+.projects-module .rep-field select,.projects-module .rep-field input{min-width:0;width:100%}
+.projects-module .rep-hint{margin:0}
+.pj-kpis{gap:10px}
+.pj-kpi{padding:12px 12px 14px}
+.pj-kpi-value{font-size:clamp(14px,11cqw,20px);margin:12px 0 4px}
+.projects-module .rep-tabs{flex-wrap:nowrap;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.projects-module .rep-tabs::-webkit-scrollbar{display:none}
+.projects-module .rep-tab{flex:0 0 auto}
+.projects-module .rep-card{padding-top:16px}
+.projects-module .rep-card-head{display:block;padding:0 14px 12px}
+.projects-module .rep-table th,.projects-module .rep-table td{padding:10px 14px}
+.projects-module .rep-table .code{width:auto;padding-right:4px;font-size:11px}
+.projects-module .rep-table td.indent{padding-left:20px}
+.projects-module .rep-subhead{margin:16px 14px 6px}
+.projects-module .rep-check,.projects-module .rep-note{margin:12px 14px}
+}
 @media(prefers-reduced-motion:reduce){.pj-kpi{transition:none}.pj-kpi:hover{transform:none}}
 @media print{.projects-module{gap:12px}.pj-kpi,.projects-module .rep-card{box-shadow:none;transform:none}.projects-module .rep-card{border:0;border-radius:0}.pj-kpi,.projects-module .rep-grand td,.projects-module .rep-total td,.projects-module .rep-check{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 `;
