@@ -39,10 +39,20 @@ const sourceLabels: Record<string, string> = {
 const getEntryAmount = (entry: JournalEntry) =>
   entry.lines.reduce((total, line) => total + line.debit, 0);
 
-const getProject = (entry: JournalEntry) => {
-  const projectLine = entry.lines.find((line) => line.projectId);
-  return projectLine?.projectId ?? "—";
-};
+const NO_PROJECT = "Not project-specific";
+
+/** Project names from the Projects register, for showing a name instead of only the ID. */
+function readProjectNames(): Map<string, string> {
+  try {
+    const raw = localStorage.getItem("ista-fortis-projects-v1");
+    const list = raw ? JSON.parse(raw) : [];
+    return new Map(
+      (Array.isArray(list) ? list : []).map((p: { id: string; projectName: string }) => [p.id, p.projectName])
+    );
+  } catch {
+    return new Map();
+  }
+}
 
 /** Reuses the status pill colours from the Projects page. */
 const statusClass = (status: string) =>
@@ -101,6 +111,7 @@ const TRANSACTIONS_CSS = `
 .projects-module .projects-table strong{font-size:12px;font-weight:600;color:var(--ink)}
 .projects-module .projects-table .num{text-align:right}
 .projects-module .money-cell{white-space:nowrap;font-variant-numeric:tabular-nums}
+.projects-module .tx-none{color:var(--muted)}
 .projects-module .tx-sub{display:block;margin-top:3px;font-size:10.5px;color:var(--muted)}
 .projects-module .tx-type{display:inline-block;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600;background:#eef8f2;color:#1f6b46;white-space:nowrap}
 .projects-module .project-status{padding:5px 10px;font-weight:600;display:inline-flex;align-items:center;gap:5px;border-radius:999px;font-size:11px;white-space:nowrap}
@@ -134,6 +145,7 @@ export default function Transactions() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null);
+  const [projectNames] = useState<Map<string, string>>(readProjectNames);
 
   useEffect(() => {
     const refreshEntries = () => {
@@ -156,6 +168,30 @@ export default function Transactions() {
     [entries]
   );
 
+  /**
+   * Project of each source record. A payment entry (supplier, worker or client payment) often has
+   * no project on its own lines, but the cost or invoice it settles does, and both share the same
+   * source ID. So an entry without a project takes the project of its linked entries.
+   */
+  const projectBySource = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const entry of entries) {
+      const id = entry.lines.find((line) => line.projectId)?.projectId;
+      if (id && entry.sourceId && !map.has(entry.sourceId)) map.set(entry.sourceId, id);
+    }
+    return map;
+  }, [entries]);
+
+  const projectIdOf = (entry: JournalEntry) =>
+    entry.lines.find((line) => line.projectId)?.projectId ?? projectBySource.get(entry.sourceId);
+
+  const getProject = (entry: JournalEntry) => {
+    const id = projectIdOf(entry);
+    if (!id) return NO_PROJECT;
+    const name = projectNames.get(id);
+    return name ? `${name} (${id})` : id;
+  };
+
   const filteredEntries = useMemo(() => {
     const query = search.toLowerCase().trim();
 
@@ -174,6 +210,7 @@ export default function Transactions() {
           entry.reference ?? "",
           entry.sourceId,
           entry.sourceType,
+          getProject(entry),
           ...entry.lines.flatMap((line) => [
             line.account,
             getAccount(line.account)?.name ?? "",
@@ -196,7 +233,8 @@ export default function Transactions() {
         const dateComparison = b.date.localeCompare(a.date);
         return dateComparison || b.createdAt.localeCompare(a.createdAt);
       });
-  }, [entries, search, typeFilter, fromDate, toDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, search, typeFilter, fromDate, toDate, projectBySource, projectNames]);
 
   const activeEntries = entries.filter(
     (entry) => !entry.reversalOf && !reversedIds.has(entry.id)
@@ -371,7 +409,7 @@ export default function Transactions() {
                           {sourceLabels[entry.sourceType] ?? entry.sourceType}
                         </span>
                       </td>
-                      <td>{getProject(entry)}</td>
+                      <td className={projectIdOf(entry) ? undefined : "tx-none"}>{getProject(entry)}</td>
                       <td>{entry.reference || "—"}</td>
                       <td className="money-cell num">
                         <strong>{formatRWF(getEntryAmount(entry))}</strong>
