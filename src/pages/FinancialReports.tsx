@@ -1,0 +1,1 @@
+export default function FinancialReports() { return <section className="placeholder-panel"><div className="eyebrow">MODULE WORKSPACE</div><h2>FinancialReports</h2><p>This module will be implemented in a later development stage.</p><div className="coming-label">Module setup pending</div></section>; }
