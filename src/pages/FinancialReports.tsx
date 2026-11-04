@@ -54,7 +54,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
 const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const prettyDate = (value: string) => {
   const [y, m, d] = value.split('-').map(Number);
-  return Number.isFinite(y) && m >= 1 && m <= 12 ? `${d} ${MONTHS[m - 1]} ${y}` : value;
+  return Number.isFinite(y) && m >= 1 && m <= 12 ? `${pad(d)} ${MONTHS[m - 1]} ${y}` : value;
 };
 const money = (n: number) => new Intl.NumberFormat('en-RW', { style: 'currency', currency: 'RWF', maximumFractionDigits: 0 }).format(Number.isFinite(n) ? Math.round(n) : 0);
 /** Accounting style: negatives in brackets. */
@@ -530,9 +530,9 @@ export default function FinancialReports() {
 
       <div className="pj-kpis rep-kpis">
         <Metric title="Income" value={fmt(data.totalRevenue)} note="Revenue earned in the period" icon={<TrendingUp size={13} />} tone="green" />
-        <Metric title="Expenses" value={fmt(totalExpenses)} note="Direct costs and operating expenses" icon={<TrendingDown size={13} />} tone="blue" />
-        <Metric title="Net profit" value={fmt(data.netProfit)} note="Income minus expenses" icon={<Activity size={13} />} tone={data.netProfit < 0 ? 'rose' : 'green'} negative={data.netProfit < 0} />
-        <Metric title="Net cash movement" value={fmt(data.netCash)} note="Cash, bank and mobile money" icon={<Wallet size={13} />} tone={data.netCash < 0 ? 'rose' : 'green'} negative={data.netCash < 0} />
+        <Metric title="Expenses" value={fmt(totalExpenses)} note="Direct costs and operating expenses" icon={<TrendingDown size={13} />} tone="rose" />
+        <Metric title="Net profit" value={fmt(data.netProfit)} note="Income minus expenses" icon={<Activity size={13} />} tone="blue" negative={data.netProfit < 0} />
+        <Metric title="Net cash movement" value={fmt(data.netCash)} note="Cash, bank and mobile money" icon={<Wallet size={13} />} tone="amber" negative={data.netCash < 0} />
       </div>
 
       <div className="rep-tabs no-print" role="tablist" aria-label="Reports">
