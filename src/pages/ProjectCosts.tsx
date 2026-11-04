@@ -34,8 +34,20 @@ const money = (n: number) => new Intl.NumberFormat('en-RW', { style: 'currency',
 
 function loadCosts(): ProjectCost[] { try { const raw = localStorage.getItem(COSTS_KEY); return raw ? JSON.parse(raw) as ProjectCost[] : []; } catch { return []; } }
 /** Worker-days recorded on the Site Labour page (read only here; that page posts them to the ledger when paid). */
-type SiteLabourDay = { projectId: string; rate: number; paid?: unknown };
-function loadSiteLabour(): SiteLabourDay[] { try { const raw = localStorage.getItem(SITE_LABOUR_KEY); const v = raw ? JSON.parse(raw) : null; return Array.isArray(v?.entries) ? v.entries as SiteLabourDay[] : []; } catch { return []; } }
+type SiteLabourDay = { id: string; projectId: string; date: string; worker: string; category: string; rate: number; paid?: { method?: string; date?: string }; createdAt?: string };
+type SiteLabourStore = { entries: SiteLabourDay[]; activities: Record<string, string> };
+function loadSiteLabour(): SiteLabourStore {
+  try {
+    const raw = localStorage.getItem(SITE_LABOUR_KEY); const v = raw ? JSON.parse(raw) : null;
+    return { entries: Array.isArray(v?.entries) ? v.entries as SiteLabourDay[] : [], activities: v?.activities && typeof v.activities === 'object' ? v.activities : {} };
+  } catch { return { entries: [], activities: {} }; }
+}
+/** One project's site labour for one day, shown as a single read-only row in the cost register. */
+type LabourDayRow = { key: string; projectId: string; projectName: string; date: string; activity: string; workers: SiteLabourDay[]; types: string[]; amount: number; paid: number; createdAt: string };
+type RegisterRow = { kind: 'cost'; cost: ProjectCost } | { kind: 'labour'; day: LabourDayRow };
+const labourStatusOf = (d: LabourDayRow): PaymentStatus => (d.paid >= d.amount ? 'Paid' : d.paid === 0 ? 'Unpaid' : 'Partially paid');
+const labourStatusClass = (d: LabourDayRow) => { const s = labourStatusOf(d); return s === 'Paid' ? 'status-active' : s === 'Unpaid' ? 'status-on-hold' : 'status-completed'; };
+const labourStatusIcon = (d: LabourDayRow) => { const s = labourStatusOf(d); return s === 'Paid' ? <CheckCircle2 size={14} /> : s === 'Unpaid' ? <CircleDashed size={14} /> : <Clock3 size={14} />; };
 function loadProjects(): ProjectOption[] { try { const raw = localStorage.getItem(PROJECTS_KEY); return raw ? JSON.parse(raw) as ProjectOption[] : []; } catch { return []; } }
 
 function paymentStatusOf(cost: ProjectCost): PaymentStatus {
@@ -104,6 +116,11 @@ const COSTS_CSS = `
 .projects-module .cost-by-project tbody tr{cursor:pointer}
 .projects-module .cost-by-project tbody tr.is-selected{background:#eef8f2}
 .projects-module .cost-sub{display:block;margin-top:3px;font-size:10.5px;color:var(--muted)}
+.projects-module .projects-table tr.is-labour-day td:first-child{box-shadow:inset 3px 0 0 #6fd6a0}
+.projects-module .labour-day-table{margin-top:14px;border:1px solid var(--line);border-radius:12px;overflow-x:auto}
+.projects-module .labour-day-note{margin:10px 0 0}
+.projects-module .labour-day-table .projects-table{min-width:0;width:100%}
+.projects-module .labour-day-table .projects-table th,.projects-module .labour-day-table .projects-table td{padding:10px 12px}
 
 /* tables (registers and import preview) */
 .projects-module .projects-table th{background:transparent;padding:10px 20px;font-size:11px;font-weight:500;letter-spacing:0;color:#8a968f;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -146,7 +163,9 @@ const COSTS_CSS = `
 export default function ProjectCosts() {
   const [costs, setCosts] = useState<ProjectCost[]>(loadCosts);
   const [projects] = useState<ProjectOption[]>(loadProjects);
-  const [siteLabour] = useState<SiteLabourDay[]>(loadSiteLabour);
+  const [siteStore] = useState<SiteLabourStore>(loadSiteLabour);
+  const siteLabour = siteStore.entries;
+  const [viewLabour, setViewLabour] = useState<LabourDayRow | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<CostForm>(blankForm);
   const [search, setSearch] = useState('');
@@ -195,7 +214,21 @@ export default function ProjectCosts() {
     return map;
   }, [siteLabour]);
   const site = useMemo(() => [...siteByProject.values()].reduce((s, r) => ({ days: s.days + r.days, total: s.total + r.total, paid: s.paid + r.paid }), { days: 0, total: 0, paid: 0 }), [siteByProject]);
-  const usedLabourTypes = useMemo(() => [...new Set(costs.map(c => c.labourType ?? '').filter(Boolean))].sort(), [costs]);
+  const labourDays = useMemo(() => {
+    const names = new Map(projects.map(p => [p.id, p.projectName]));
+    const map = new Map<string, LabourDayRow>();
+    siteLabour.forEach(d => {
+      const key = `${d.projectId}|${d.date}`;
+      const row = map.get(key) ?? { key, projectId: d.projectId, projectName: names.get(d.projectId) ?? d.projectId, date: d.date, activity: siteStore.activities[key] ?? '', workers: [], types: [], amount: 0, paid: 0, createdAt: d.createdAt ?? `${d.date}T00:00:00.000Z` };
+      const rate = Number(d.rate) || 0;
+      row.workers.push(d); row.amount += rate; if (d.paid) row.paid += rate;
+      if (d.category && !row.types.includes(d.category)) row.types.push(d.category);
+      if (d.createdAt && d.createdAt < row.createdAt) row.createdAt = d.createdAt;
+      map.set(key, row);
+    });
+    return [...map.values()];
+  }, [siteLabour, siteStore.activities, projects]);
+  const usedLabourTypes = useMemo(() => [...new Set([...costs.map(c => c.labourType ?? ''), ...labourDays.flatMap(d => d.types)].filter(Boolean))].sort(), [costs, labourDays]);
   const labourOptions = useMemo(() => [...new Set([...LABOUR_TYPES, ...usedLabourTypes])], [usedLabourTypes]);
   const totals = useMemo(() => ({
     total: activeCosts.reduce((s, c) => s + c.amount, 0) + site.total,
@@ -224,20 +257,37 @@ export default function ProjectCosts() {
     return [...map.values()].sort((a, b) => b.total - a.total);
   }, [costs, projects, siteByProject]);
 
-  const visibleCosts = useMemo(() => costs.filter(c => {
-    if (c.reversed !== showReversed) return false;
+  const visibleRows = useMemo((): RegisterRow[] => {
     const q = search.trim().toLowerCase();
-    const matchesText = !q || [c.id, c.projectName, c.description, c.supplier, c.reference, c.category, c.labourType ?? ''].some(v => v.toLowerCase().includes(q));
-    const matchesProject = projectFilter === 'All' || c.projectId === projectFilter;
-    const matchesCategory = categoryFilter === 'All' || c.category === categoryFilter;
-    const matchesLabour = labourFilter === 'All' || c.labourType === labourFilter;
-    const d = new Date(`${c.date}T00:00:00`); const now = new Date();
-    const matchesPeriod = period === 'All' || (period === 'This month' && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()) || (period === 'This year' && d.getFullYear() === now.getFullYear());
-    return matchesText && matchesProject && matchesCategory && matchesLabour && matchesPeriod;
-  }).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)), [costs, search, projectFilter, categoryFilter, labourFilter, period, showReversed]);
+    const now = new Date();
+    const inPeriod = (date: string) => {
+      const d = new Date(`${date}T00:00:00`);
+      return period === 'All' || (period === 'This month' && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()) || (period === 'This year' && d.getFullYear() === now.getFullYear());
+    };
+    const costRows = costs.filter(c => {
+      if (c.reversed !== showReversed) return false;
+      const matchesText = !q || [c.id, c.projectName, c.description, c.supplier, c.reference, c.category, c.labourType ?? ''].some(v => v.toLowerCase().includes(q));
+      const matchesProject = projectFilter === 'All' || c.projectId === projectFilter;
+      const matchesCategory = categoryFilter === 'All' || c.category === categoryFilter;
+      const matchesLabour = labourFilter === 'All' || c.labourType === labourFilter;
+      return matchesText && matchesProject && matchesCategory && matchesLabour && inPeriod(c.date);
+    }).map((cost): RegisterRow => ({ kind: 'cost', cost }));
+    // Site labour days are never reversed here (payments are undone on the Site Labour page), so they only show with active costs.
+    const labourRows = showReversed ? [] : labourDays.filter(d => {
+      const matchesText = !q || ['site labour', 'labour', d.projectName, d.projectId, d.activity, ...d.types, ...d.workers.map(w => w.worker)].some(v => v.toLowerCase().includes(q));
+      const matchesProject = projectFilter === 'All' || d.projectId === projectFilter;
+      const matchesCategory = categoryFilter === 'All' || categoryFilter === 'Labour';
+      const matchesLabour = labourFilter === 'All' || d.types.includes(labourFilter);
+      return matchesText && matchesProject && matchesCategory && matchesLabour && inPeriod(d.date);
+    }).map((day): RegisterRow => ({ kind: 'labour', day }));
+    const dateOf = (r: RegisterRow) => (r.kind === 'cost' ? r.cost.date : r.day.date);
+    const createdOf = (r: RegisterRow) => (r.kind === 'cost' ? r.cost.createdAt : r.day.createdAt);
+    return [...costRows, ...labourRows].sort((a, b) => dateOf(b).localeCompare(dateOf(a)) || createdOf(b).localeCompare(createdOf(a)));
+  }, [costs, labourDays, search, projectFilter, categoryFilter, labourFilter, period, showReversed]);
 
   // Total of whatever the register is currently showing (follows every filter).
-  const filteredTotal = useMemo(() => visibleCosts.reduce((s, c) => s + c.amount, 0), [visibleCosts]);
+  const filteredTotal = useMemo(() => visibleRows.reduce((s, r) => s + (r.kind === 'cost' ? r.cost.amount : r.day.amount), 0), [visibleRows]);
+  const hasAnyRecords = costs.length > 0 || labourDays.length > 0;
 
   const preview = useMemo(
     () => (importSheets ? buildCostPreview(importSheets[sheetIndex].table, projects, costs, importOptions) : null),
@@ -372,7 +422,7 @@ export default function ProjectCosts() {
 
     <div className="panel projects-register">
       <div className="panel-heading projects-heading">
-        <div><h3>Cost register</h3><p>{visibleCosts.length} record{visibleCosts.length === 1 ? '' : 's'} {showReversed ? 'reversed' : 'shown'} · Total {money(filteredTotal)}</p></div>
+        <div><h3>Cost register</h3><p>{visibleRows.length} record{visibleRows.length === 1 ? '' : 's'} {showReversed ? 'reversed' : 'shown'} · Total {money(filteredTotal)}{!showReversed && labourDays.length > 0 && ' · Site labour shows one row per project per day'}</p></div>
         <div className="cost-filters">
           <label className="projects-search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search costs..." /></label>
           <select value={projectFilter} onChange={e => setProjectFilter(e.target.value)} aria-label="Filter by project"><option value="All">All projects</option>{projects.map(p => <option key={p.id} value={p.id}>{p.projectName}</option>)}</select>
@@ -383,13 +433,29 @@ export default function ProjectCosts() {
         </div>
       </div>
 
-      {visibleCosts.length === 0 ? (
-        <div className="projects-empty"><div className="projects-empty-icon"><Receipt size={24} /></div><h3>{showReversed ? 'No reversed costs' : costs.length ? 'No matching costs' : 'No project costs recorded yet'}</h3><p>{showReversed ? 'Reversed records will appear here.' : costs.length ? 'Try another search term or filter.' : projects.length ? 'Record your first project cost, or import your existing costs from an Excel file.' : 'Register a project first. Costs must be assigned to a project.'}</p>{!showReversed && !costs.length && projects.length > 0 && <div className="projects-header-actions" style={{ justifyContent: 'center' }}><button className="projects-secondary-button" onClick={openImport}><Upload size={16} /> <span>Import from Excel</span></button><button className="primary-button" onClick={openForm}><Plus size={16} /> Record first cost</button></div>}</div>
+      {visibleRows.length === 0 ? (
+        <div className="projects-empty"><div className="projects-empty-icon"><Receipt size={24} /></div><h3>{showReversed ? 'No reversed costs' : hasAnyRecords ? 'No matching costs' : 'No project costs recorded yet'}</h3><p>{showReversed ? 'Reversed records will appear here.' : hasAnyRecords ? 'Try another search term or filter.' : projects.length ? 'Record your first project cost, or import your existing costs from an Excel file.' : 'Register a project first. Costs must be assigned to a project.'}</p>{!showReversed && !costs.length && projects.length > 0 && <div className="projects-header-actions" style={{ justifyContent: 'center' }}><button className="projects-secondary-button" onClick={openImport}><Upload size={16} /> <span>Import from Excel</span></button><button className="primary-button" onClick={openForm}><Plus size={16} /> Record first cost</button></div>}</div>
       ) : (
         <div className="projects-table-wrap">
           <table className="projects-table">
             <thead><tr><th>Date / ID</th><th>Project / description</th><th>Category</th><th>Supplier / recipient</th><th>Total cost</th><th>Paid</th><th>Balance</th><th>Status</th><th /></tr></thead>
-            <tbody>{visibleCosts.map(c => {
+            <tbody>{visibleRows.map(row => {
+              if (row.kind === 'labour') {
+                const d = row.day;
+                const progress = d.amount > 0 ? Math.min(d.paid / d.amount * 100, 100) : 0;
+                return <tr key={`labour-${d.key}`} className="is-labour-day">
+                  <td className="money-cell"><strong>{d.date}</strong><span className="cost-sub">Site labour</span></td>
+                  <td style={{ minWidth: 180 }}><strong>{d.projectName}</strong><span className="cost-sub">Site labour · {d.workers.length} worker{d.workers.length === 1 ? '' : 's'}{d.activity ? ` · ${d.activity}` : ''}</span></td>
+                  <td>Labour{d.types.length > 0 && <span className="cost-sub">{d.types.join(', ')}</span>}</td>
+                  <td>{d.workers.length} worker{d.workers.length === 1 ? '' : 's'}</td>
+                  <td className="money-cell"><strong>{money(d.amount)}</strong></td>
+                  <td><div className="received-cell"><strong>{money(d.paid)}</strong><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><small>{progress.toFixed(0)}% paid</small></div></td>
+                  <td className="money-cell">{money(d.amount - d.paid)}</td>
+                  <td><span className={`project-status ${labourStatusClass(d)}`}>{labourStatusIcon(d)}{labourStatusOf(d)}</span></td>
+                  <td><div className="project-row-actions"><button aria-label={`View site labour for ${d.projectName} on ${d.date}`} title="View workers" onClick={() => setViewLabour(d)}><Eye size={15} /></button></div></td>
+                </tr>;
+              }
+              const c = row.cost;
               const due = c.amount - c.amountPaid;
               const progress = c.amount > 0 ? Math.min(c.amountPaid / c.amount * 100, 100) : 0;
               return <tr key={c.id} className={c.reversed ? 'is-reversed' : undefined}>
@@ -451,6 +517,32 @@ export default function ProjectCosts() {
           {!viewCost.reversed && <button className="projects-cancel" onClick={() => reverseCost(viewCost)}><Ban size={14} /> Reverse record</button>}
           <button className="primary-button" onClick={() => setViewCost(null)}>Close</button>
         </div>
+      </section>
+    </div>}
+
+    {viewLabour && <div className="projects-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setViewLabour(null); }}>
+      <section className="projects-modal project-detail-modal" role="dialog" aria-modal="true" aria-labelledby="labour-detail-title">
+        <div className="projects-modal-header"><div><div className="eyebrow">SITE LABOUR · {viewLabour.date}</div><h3 id="labour-detail-title">{viewLabour.projectName}</h3></div><button className="projects-close" onClick={() => setViewLabour(null)} aria-label="Close"><X size={19} /></button></div>
+        <span className={`project-status ${labourStatusClass(viewLabour)}`}>{labourStatusIcon(viewLabour)}{labourStatusOf(viewLabour)}</span>
+        <div className="project-detail-grid">
+          <Detail label="Project" value={viewLabour.projectName} /><Detail label="Date" value={viewLabour.date} />
+          <Detail label="Activity" value={viewLabour.activity || '—'} /><Detail label="Workers" value={String(viewLabour.workers.length)} />
+          <Detail label="Day total" value={money(viewLabour.amount)} /><Detail label="Paid" value={money(viewLabour.paid)} />
+          <Detail label="Awaiting payment" value={money(viewLabour.amount - viewLabour.paid)} />
+        </div>
+        <div className="projects-table-wrap labour-day-table">
+          <table className="projects-table">
+            <thead><tr><th>Worker</th><th>Category</th><th>Pay for the day</th><th>Payment</th></tr></thead>
+            <tbody>{[...viewLabour.workers].sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '')).map(w => <tr key={w.id}>
+              <td><strong>{w.worker}</strong></td>
+              <td>{w.category}</td>
+              <td className="money-cell">{money(Number(w.rate) || 0)}</td>
+              <td>{w.paid ? <><span className="project-status status-active"><CheckCircle2 size={14} />Paid</span>{(w.paid.method || w.paid.date) && <span className="cost-sub">{[w.paid.method, w.paid.date].filter(Boolean).join(' · ')}</span>}</> : <span className="project-status status-on-hold"><CircleDashed size={14} />Not paid</span>}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+        <p className="cost-sub labour-day-note">Read only. Add workers, change rates or tick payments on the Site Labour page.</p>
+        <div className="projects-form-actions"><button className="primary-button" onClick={() => setViewLabour(null)}>Close</button></div>
       </section>
     </div>}
 
