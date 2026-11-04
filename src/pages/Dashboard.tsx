@@ -1,1250 +1,375 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, useMemo } from 'react';
 import {
-  Plus,
-  Search,
-  X,
-  ReceiptText,
-  Wallet,
-  Clock,
-  CheckCircle2,
-  Clock3,
-  CircleDashed,
-  Eye,
-  CreditCard,
+  Building2, Wallet, ReceiptText, CircleDollarSign, ArrowUpRight, ArrowDownRight, Plus,
+  CalendarDays, FileText, AlertTriangle, Info, CheckCircle2, ChevronRight, Briefcase,
+  TrendingUp, TrendingDown, Landmark, Banknote,
 } from 'lucide-react';
-import { ACC } from '../lib/accounts';
-import { ledger, type JournalEntry, type JournalLineInput } from '../lib/ledger';
-import { formatDate } from '../lib/format';
+import type { LucideIcon } from 'lucide-react';
+import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts';
+import { ACC, getAccount, isDirectCost } from '../lib/accounts';
+import { syncStoredInvoices, syncStoredProjectCosts } from '../lib/postings';
+import { useLedgerEntries } from '../lib/useLedger';
+import type { JournalEntry } from '../lib/ledger';
 
-const STORAGE_KEY = 'ista-fortis-expenses-v1';
+const PROJECTS_KEY = 'ista-fortis-projects-v1';
+const INVOICES_KEY = 'ista-fortis-invoices-v1';
+const CASH_CODES: string[] = [ACC.cash, ACC.bank, ACC.mobileMoney];
 
-const CATEGORIES = [
-  { label: 'Administration', account: ACC.admin },
-  { label: 'Rent & Utilities', account: ACC.rentUtilities },
-  { label: 'Bank Charges', account: ACC.bankCharges },
-  { label: 'Interest Expense', account: ACC.interest },
-  { label: 'Depreciation', account: ACC.depreciation },
-  { label: 'Travel & Accommodation', account: ACC.travel },
-  { label: 'Other Operating Expenses', account: ACC.otherOperating },
-];
-
-type Payment = {
-  id: string;
-  amount: number;
-  date: string;
-  method: string;
-  reference: string;
-  notes: string;
+type ProjectRow = {
+  id: string; projectName: string; client: string; contractValue: number;
+  totalReceived: number; status: string; currentPhase?: string;
 };
-
-type Expense = {
-  id: string;
-  expenseNumber: string;
-  date: string;
-  category: string;
-  description: string;
-  supplier: string;
-  amount: number;
-  amountPaid: number;
-  paymentMethod: string;
-  reference: string;
-  notes: string;
-  payments: Payment[];
-  createdAt: string;
+type InvoiceRow = {
+  invoiceNumber: string; client: string; amount: number; dueDate: string; projectId?: string;
+  voided?: boolean; payments?: { amount: number }[];
 };
+type Tone = 'green' | 'blue' | 'amber' | 'rose' | 'slate';
+type Alert = { key: string; level: 'warn' | 'info'; title: string; detail: string; page: string };
+type TxRow = { key: string; title: string; detail: string; amount: string; type: 'in' | 'out' };
 
-type ExpenseForm = {
-  date: string;
-  category: string;
-  description: string;
-  supplier: string;
-  amount: number;
-  amountPaid: number;
-  paymentMethod: string;
-  reference: string;
-  notes: string;
-};
-
-type PaymentForm = {
-  amount: number;
-  date: string;
-  method: string;
-  reference: string;
-  notes: string;
-};
-
-const money = (amount: number) =>
-  new Intl.NumberFormat('en-RW', {
-    style: 'currency',
-    currency: 'RWF',
-    maximumFractionDigits: 0,
-  }).format(amount || 0);
-
-const today = () => {
-  const date = new Date();
-  const localDate = new Date(
-    date.getTime() - date.getTimezoneOffset() * 60000
-  );
-  return localDate.toISOString().slice(0, 10);
-};
-
-function makeId() {
-  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function readExpenses(): Expense[] {
+function readList<T>(key: string): T[] {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return [];
+    const raw = localStorage.getItem(key);
+    const data = raw ? JSON.parse(raw) : [];
+    return Array.isArray(data) ? data as T[] : [];
+  } catch { return []; }
+}
 
-    const parsed = JSON.parse(saved);
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+const money = (n: number) => new Intl.NumberFormat('en-RW', { style: 'currency', currency: 'RWF', maximumFractionDigits: 0 }).format(Number.isFinite(n) ? n : 0);
 
-    if (!Array.isArray(parsed)) return [];
+/** Short labels for the chart axis only, e.g. 12.5M. Tooltips show the full amount. */
+const axisLabel = (v: number | string): string => {
+  const n = Number(v);
+  const abs = Math.abs(n);
+  if (abs >= 1e6) return `${+(n / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3) return `${Math.round(n / 1e3)}K`;
+  return String(n);
+};
 
-    return parsed.map((expense) => ({
-      ...expense,
-      payments: Array.isArray(expense.payments)
-        ? expense.payments
-        : [],
-      amountPaid: Number(expense.amountPaid || 0),
-    }));
-  } catch {
-    return [];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const pad = (n: number) => String(n).padStart(2, '0');
+const prettyDate = (iso: string) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return Number.isFinite(y) && m >= 1 && m <= 12 ? `${d} ${MONTHS[m - 1]} ${y}` : iso;
+};
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const nameList = (list: ProjectRow[]) =>
+  list.slice(0, 2).map(p => p.projectName).join(', ') + (list.length > 2 ? ` and ${list.length - 2} more` : '');
+
+/** Money in/out is read from the cash, bank and mobile money accounts, so it is right for every module and for reversals. */
+function toTxRow(e: JournalEntry, projectNames: Map<string, string>): TxRow {
+  const cashNet = e.lines.filter(l => CASH_CODES.includes(l.account)).reduce((s, l) => s + l.debit - l.credit, 0);
+  const totalDebit = e.lines.reduce((s, l) => s + l.debit, 0);
+  let type: 'in' | 'out';
+  let amount: string;
+  if (cashNet !== 0) {
+    type = cashNet > 0 ? 'in' : 'out';
+    amount = `${cashNet > 0 ? '+ ' : '- '}${money(Math.abs(cashNet))}`;
+  } else {
+    const revenueNet = e.lines.reduce((s, l) => (getAccount(l.account)?.type === 'Revenue' ? s + l.credit - l.debit : s), 0);
+    type = revenueNet > 0 ? 'in' : 'out';
+    amount = money(totalDebit); // no cash moved, e.g. an invoice issued or a cost not yet paid
   }
+  const projectId = e.lines.find(l => l.projectId)?.projectId;
+  const where = (projectId && projectNames.get(projectId)) || e.lines.find(l => l.party)?.party || e.sourceType.replace(/_/g, ' ');
+  return { key: e.id, title: e.description, detail: `${where} · ${prettyDate(e.date)}${cashNet === 0 ? ' · no cash movement' : ''}`, amount, type };
 }
 
-function paidAmount(expense: Expense) {
-  return Number(expense.amountPaid || 0);
-}
-
-function balance(expense: Expense) {
-  return Math.max(expense.amount - paidAmount(expense), 0);
-}
-
-function expenseStatus(expense: Expense) {
-  if (balance(expense) <= 0) return 'Paid';
-  if (paidAmount(expense) > 0) return 'Partially Paid';
-  return 'Unpaid';
-}
-
-function accountForMethod(method: string) {
-  if (method === 'Bank transfer' || method === 'Cheque') {
-    return ACC.bank;
-  }
-
-  if (method === 'Mobile money') {
-    return ACC.mobileMoney;
-  }
-
-  return ACC.cash;
-}
-
-/** Reuses the status pill colours from the Projects page. */
-const statusClass = (status: string) =>
-  status === 'Paid'
-    ? 'status-active'
-    : status === 'Partially Paid'
-      ? 'status-completed'
-      : 'status-on-hold';
-
-function statusIcon(status: string) {
-  if (status === 'Paid') return <CheckCircle2 size={14} />;
-  if (status === 'Partially Paid') return <Clock3 size={14} />;
-  return <CircleDashed size={14} />;
-}
-
-const initialExpenseForm = (): ExpenseForm => ({
-  date: today(),
-  category: 'Administration',
-  description: '',
-  supplier: '',
-  amount: 0,
-  amountPaid: 0,
-  paymentMethod: 'Cash',
-  reference: '',
-  notes: '',
-});
-
-/**
- * Page styles live here so this page is a single file. They mirror the Projects page and are
- * scoped under .projects-module, so they restyle this page (and its pop-ups) only.
- */
-const EXPENSES_CSS = `
-.projects-module{--lime:#d5f56b;--lime-ink:#1d2b12;--ink:#1c2b22;--muted:#7d8a83;--line:#edf0f1;display:flex;flex-direction:column;gap:22px;color:var(--ink)}
-.projects-module button:focus-visible{outline:2px solid #2f8f6b;outline-offset:2px}
-
-/* header */
-.projects-module .welcome-row{margin-bottom:0;gap:20px;flex-wrap:wrap;align-items:flex-end}
-.projects-module .welcome-row h2{font-size:28px;font-weight:700;letter-spacing:-.4px;margin:6px 0 4px;color:var(--ink)}
-.projects-module .welcome-row p{font-size:13px;color:var(--muted)}
-.projects-module .primary-button{height:39px;border-radius:12px;background:var(--lime);color:var(--lime-ink);font-size:12px;font-weight:600;box-shadow:none}
-.projects-module .primary-button:hover{background:#c8ea52}
-.projects-module .projects-import-notice{margin-bottom:0;background:#bdeed6;border:0;color:#1f6b46;border-radius:12px}
-
-/* pastel KPI cards */
-.pj-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
-.pj-kpi{--bg:#bdeed6;--fg:#1f7a4f;display:flex;flex-direction:column;background:var(--bg);border-radius:16px;padding:14px 16px 16px;text-align:center;container-type:inline-size;transition:transform .15s ease,box-shadow .15s ease}
-.pj-kpi:hover{transform:translateY(-1px);box-shadow:0 8px 20px #1c2b2214}
-.pj-kpi.tone-green{--bg:#bdeed6;--fg:#1f7a4f}
-.pj-kpi.tone-blue{--bg:#c9defb;--fg:#3a66ad}
-.pj-kpi.tone-amber{--bg:#fde5c4;--fg:#a8691f}
-.pj-kpi.tone-rose{--bg:#fbd6db;--fg:#b04a58}
-.pj-kpi-top{display:flex;align-items:center;gap:8px;min-height:24px}
-.pj-kpi-icon{width:22px;height:22px;border-radius:50%;background:#ffffffb3;color:var(--fg);display:grid;place-items:center;flex-shrink:0}
-.pj-kpi-label{font-size:11px;font-weight:600;color:#3d4a43;line-height:1.3;text-align:left}
-.pj-kpi-value{font-weight:700;font-size:clamp(16px,10.5cqw,26px);letter-spacing:-.4px;color:var(--ink);margin:16px 0 6px;white-space:nowrap;font-variant-numeric:tabular-nums}
-.pj-kpi-note{font-size:10.5px;color:#4f5d55;margin-top:auto;line-height:1.45}
-
-/* register card */
-.projects-module .projects-register{padding:20px 0 6px;background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 1px 2px #1c2b2208;overflow:hidden}
-.projects-module .projects-heading{padding:0 20px 14px}
-.projects-module .projects-heading h3{font-size:16px;font-weight:600;color:var(--ink)}
-.projects-module .projects-heading p{color:var(--muted)}
-.projects-module .projects-search{border-radius:12px;border:1px solid var(--line);background:#fff;height:38px}
-.projects-module .exp-filters{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-.projects-module .exp-filters select{border-radius:12px;border:1px solid var(--line);height:38px;background:#fff;color:var(--ink);padding:0 10px;font:inherit;font-size:12px}
-
-/* tables */
-.projects-module .projects-table th{background:transparent;padding:10px 20px;font-size:11px;font-weight:500;letter-spacing:0;color:#8a968f;border-bottom:1px solid var(--line);white-space:nowrap}
-.projects-module .projects-table td{padding:14px 20px;font-size:12px;color:#3b4a42;border-top:0;border-bottom:1px solid #f1f4f4}
-.projects-module .projects-table tbody tr:last-child td{border-bottom:0}
-.projects-module .projects-table tbody tr:hover{background:#f7faf9}
-.projects-module .projects-table strong{font-size:12px;font-weight:600;color:var(--ink)}
-.projects-module .money-cell{white-space:nowrap;font-variant-numeric:tabular-nums}
-.projects-module .exp-sub{display:block;margin-top:3px;font-size:10.5px;color:var(--muted)}
-.projects-module .received-cell .progress-track{background:#eef1f1;border-radius:6px}
-.projects-module .received-cell .progress-track i{background:#6fd6a0;border-radius:6px}
-.projects-module .project-status{padding:5px 10px;font-weight:600;display:inline-flex;align-items:center;gap:5px;border-radius:999px;font-size:11px;white-space:nowrap}
-.projects-module .status-active{background:#bdeed6;color:#1f6b46}
-.projects-module .status-completed{background:#c9defb;color:#3a66ad}
-.projects-module .status-on-hold{background:#fde5c4;color:#a8691f}
-.projects-module .project-row-actions{display:flex;gap:6px}
-.projects-module .project-row-actions button,.projects-module .projects-close{border-radius:10px;border:1px solid var(--line)}
-.projects-module .project-row-actions button:hover,.projects-module .projects-close:hover{background:#f1f5f4;color:var(--ink)}
-.projects-module .projects-empty-icon{background:#ebe8fb;color:#6a5bc2;border-radius:14px}
-.projects-module .exp-empty-inline{padding:22px 0;text-align:center;font-size:12px;color:var(--muted)}
-
-/* note */
-.projects-module .exp-note{padding:14px 16px;border-radius:14px;background:#eef8f2;color:#3f5a4c;font-size:11.5px;line-height:1.6}
-
-/* pop-ups */
-.projects-module .projects-modal{border-radius:18px}
-.projects-module .projects-modal-header h3{color:var(--ink)}
-.projects-module .projects-field input,.projects-module .projects-field select,.projects-module .projects-field textarea{border-radius:10px;border-color:#e5eaec}
-.projects-module .projects-cancel{border-radius:12px;border-color:var(--line)}
-.projects-module .project-detail-grid{border-radius:12px}
-.projects-module .exp-summary{display:grid;gap:6px;padding:12px 14px;margin:14px 0 0;border-radius:12px;background:#fde5c4;color:#7a4c14;font-size:12.5px}
-.projects-module .exp-summary.neutral{background:#eef8f2;color:#3f5a4c}
-.projects-module .exp-section-title{font-size:13px;font-weight:600;margin:18px 0 8px;color:var(--ink)}
-
-@media(max-width:1100px){.pj-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:420px){.pj-kpis{grid-template-columns:1fr}}
-@media(max-width:600px){.projects-module .projects-table th,.projects-module .projects-table td{padding-left:14px;padding-right:14px}}
-@media(prefers-reduced-motion:reduce){.pj-kpi{transition:none}.pj-kpi:hover{transform:none}}
-`;
-
-export default function Expenses() {
-  const [expenses, setExpenses] = useState<Expense[]>(readExpenses);
-  const [entries, setEntries] = useState<readonly JournalEntry[]>(() =>
-    ledger.getEntries()
-  );
-
-  const [showForm, setShowForm] = useState(false);
-  const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
-  const [paymentExpense, setPaymentExpense] = useState<Expense | null>(null);
-
-  const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
-
-  const [form, setForm] = useState<ExpenseForm>(initialExpenseForm);
-  const [paymentForm, setPaymentForm] = useState<PaymentForm>({
-    amount: 0,
-    date: today(),
-    method: 'Cash',
-    reference: '',
-    notes: '',
-  });
-
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-
-  const persist = (updated: Expense[]) => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    setExpenses(updated);
-  };
-
-  useEffect(() => {
-    const unsubscribe = ledger.subscribe(() => {
-      setEntries(ledger.getEntries());
-    });
-
-    return unsubscribe;
-  }, []);
-
-  const totalExpenses = expenses.reduce(
-    (total, expense) => total + expense.amount,
-    0
-  );
-
-  const totalPaid = expenses.reduce(
-    (total, expense) => total + paidAmount(expense),
-    0
-  );
-
-  const totalOutstanding = expenses.reduce(
-    (total, expense) => total + balance(expense),
-    0
-  );
-
-  const paidPct =
-    totalExpenses > 0 ? Math.round((totalPaid / totalExpenses) * 100) : 0;
-  const unsettled = expenses.filter((expense) => balance(expense) > 0).length;
-
-  const filteredExpenses = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    return expenses
-      .filter((expense) => {
-        const matchesSearch =
-          !query ||
-          expense.expenseNumber.toLowerCase().includes(query) ||
-          expense.description.toLowerCase().includes(query) ||
-          expense.supplier.toLowerCase().includes(query) ||
-          expense.reference.toLowerCase().includes(query);
-
-        const matchesCategory =
-          categoryFilter === 'all' ||
-          expense.category === categoryFilter;
-
-        const matchesStatus =
-          statusFilter === 'all' ||
-          expenseStatus(expense) === statusFilter;
-
-        return matchesSearch && matchesCategory && matchesStatus;
-      })
-      .sort((a, b) => b.date.localeCompare(a.date));
-  }, [expenses, search, categoryFilter, statusFilter]);
-
-  const closeForm = () => {
-    setShowForm(false);
-    setError('');
-  };
-
-  const closePayment = () => {
-    setPaymentExpense(null);
-    setError('');
-  };
-
-  const saveExpense = () => {
-    setError('');
-    setSuccess('');
-
-    if (!form.date) {
-      setError('Please select the expense date.');
-      return;
-    }
-
-    if (!form.description.trim()) {
-      setError('Please enter an expense description.');
-      return;
-    }
-
-    if (!form.category) {
-      setError('Please select an expense category.');
-      return;
-    }
-
-    if (!form.amount || form.amount <= 0) {
-      setError('Enter an expense amount greater than zero.');
-      return;
-    }
-
-    if (
-      form.amountPaid < 0 ||
-      form.amountPaid > form.amount
-    ) {
-      setError('The amount paid cannot exceed the total expense.');
-      return;
-    }
-
-    const category = CATEGORIES.find(
-      (item) => item.label === form.category
-    );
-
-    if (!category) {
-      setError('Invalid expense category.');
-      return;
-    }
-
-    const id = makeId();
-    const expenseNumber = `EXP-${String(expenses.length + 1).padStart(4, '0')}`;
-
-    const expense: Expense = {
-      id,
-      expenseNumber,
-      date: form.date,
-      category: form.category,
-      description: form.description.trim(),
-      supplier: form.supplier.trim(),
-      amount: form.amount,
-      amountPaid: form.amountPaid,
-      paymentMethod: form.paymentMethod,
-      reference: form.reference.trim(),
-      notes: form.notes.trim(),
-      payments: form.amountPaid > 0
-        ? [
-            {
-              id: makeId(),
-              amount: form.amountPaid,
-              date: form.date,
-              method: form.paymentMethod,
-              reference: form.reference.trim(),
-              notes: 'Initial payment recorded with expense.',
-            },
-          ]
-        : [],
-      createdAt: new Date().toISOString(),
-    };
-
-    try {
-      const lines: JournalLineInput[] = [
-        {
-          account: category.account,
-          debit: form.amount,
-          party: form.supplier.trim() || undefined,
-          memo: form.description.trim(),
-        },
-      ];
-
-      if (form.amountPaid > 0) {
-        lines.push({
-          account: accountForMethod(form.paymentMethod),
-          debit: 0,
-          credit: form.amountPaid,
-          party: form.supplier.trim() || undefined,
-          memo: `Initial payment - ${form.description.trim()}`,
-        });
-      }
-
-      const unpaid = form.amount - form.amountPaid;
-
-      if (unpaid > 0) {
-        lines.push({
-          account: ACC.payables,
-          debit: 0,
-          credit: unpaid,
-          party: form.supplier.trim() || undefined,
-          memo: `Outstanding expense - ${form.description.trim()}`,
-        });
-      }
-
-      ledger.post({
-        date: form.date,
-        description: `Expense: ${form.description.trim()}`,
-        sourceType: 'expense',
-        sourceId: id,
-        idempotencyKey: `expense:${id}`,
-        reference: form.reference.trim() || expenseNumber,
-        lines,
-      });
-
-      persist([expense, ...expenses]);
-      setEntries(ledger.getEntries());
-      setShowForm(false);
-      setForm(initialExpenseForm());
-      setSuccess(`${expenseNumber} recorded successfully.`);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Unable to record the expense.'
-      );
-    }
-  };
-
-  const recordAdditionalPayment = () => {
-    setError('');
-    setSuccess('');
-
-    if (!paymentExpense) return;
-
-    if (!paymentForm.date) {
-      setError('Please select the payment date.');
-      return;
-    }
-
-    if (!paymentForm.amount || paymentForm.amount <= 0) {
-      setError('Enter a payment amount greater than zero.');
-      return;
-    }
-
-    const outstanding = balance(paymentExpense);
-
-    if (paymentForm.amount > outstanding) {
-      setError(
-        `Payment cannot exceed the outstanding balance of ${money(outstanding)}.`
-      );
-      return;
-    }
-
-    const paymentNumber = paymentExpense.payments.length + 1;
-
-    try {
-      ledger.post({
-        date: paymentForm.date,
-        description: `Payment for ${paymentExpense.expenseNumber}`,
-        sourceType: 'expense',
-        sourceId: paymentExpense.id,
-        idempotencyKey: `expense-payment:${paymentExpense.id}:${paymentNumber}`,
-        reference: paymentForm.reference.trim() || undefined,
-        lines: [
-          {
-            account: ACC.payables,
-            debit: paymentForm.amount,
-            party: paymentExpense.supplier || undefined,
-            memo: `Payment for ${paymentExpense.description}`,
-          },
-          {
-            account: accountForMethod(paymentForm.method),
-            credit: paymentForm.amount,
-            party: paymentExpense.supplier || undefined,
-            memo: `Settlement of ${paymentExpense.expenseNumber}`,
-          },
-        ],
-      });
-
-      const payment: Payment = {
-        id: makeId(),
-        amount: paymentForm.amount,
-        date: paymentForm.date,
-        method: paymentForm.method,
-        reference: paymentForm.reference.trim(),
-        notes: paymentForm.notes.trim(),
-      };
-
-      const updated = expenses.map((expense) =>
-        expense.id === paymentExpense.id
-          ? {
-              ...expense,
-              amountPaid: expense.amountPaid + payment.amount,
-              payments: [...expense.payments, payment],
-            }
-          : expense
-      );
-
-      persist(updated);
-      setPaymentExpense(null);
-      setPaymentForm({
-        amount: 0,
-        date: today(),
-        method: 'Cash',
-        reference: '',
-        notes: '',
-      });
-      setEntries(ledger.getEntries());
-      setSuccess('Expense payment recorded successfully.');
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Unable to record this payment.'
-      );
-    }
-  };
-
-  const openPayment = (expense: Expense) => {
-    setError('');
-    setPaymentForm({
-      amount: balance(expense),
-      date: today(),
-      method: 'Cash',
-      reference: '',
-      notes: '',
-    });
-    setPaymentExpense(expense);
-  };
-
-  const expenseLedgerEntries = entries.filter(
-    (entry) => entry.sourceType === 'expense'
-  );
-
-  return (
-    <section className="projects-module">
-      <style>{EXPENSES_CSS}</style>
-
-      <div className="welcome-row">
-        <div>
-          <div className="eyebrow">FINANCIAL MANAGEMENT</div>
-          <h2>Expenses</h2>
-          <p>Manage operating expenses, payments and outstanding obligations.</p>
-        </div>
-
-        <div className="projects-header-actions">
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => {
-              setError('');
-              setSuccess('');
-              setShowForm(true);
-            }}
-          >
-            <Plus size={16} /> Record expense
-          </button>
-        </div>
-      </div>
-
-      {success && (
-        <div className="projects-import-notice" role="status">
-          <span>{success}</span>
-          <button onClick={() => setSuccess('')} aria-label="Dismiss">
-            <X size={15} />
-          </button>
-        </div>
-      )}
-
-      <div className="pj-kpis">
-        <Metric
-          icon={<ReceiptText size={13} />}
-          label="Total expenses"
-          value={money(totalExpenses)}
-          note={`${expenses.length} expense record${expenses.length === 1 ? '' : 's'}`}
-          tone="blue"
-        />
-        <Metric
-          icon={<Wallet size={13} />}
-          label="Total paid"
-          value={money(totalPaid)}
-          note={
-            totalExpenses > 0
-              ? `${paidPct}% of expenses settled`
-              : 'No expenses recorded yet'
-          }
-          tone="green"
-        />
-        <Metric
-          icon={<Clock size={13} />}
-          label="Outstanding"
-          value={money(totalOutstanding)}
-          note={
-            unsettled > 0
-              ? `${unsettled} expense${unsettled === 1 ? '' : 's'} still to be paid`
-              : 'Nothing left to pay'
-          }
-          tone="amber"
-        />
-        <Metric
-          icon={<CheckCircle2 size={13} />}
-          label="Expense records"
-          value={String(expenses.length)}
-          note={`${expenses.length - unsettled} fully paid`}
-          tone="blue"
-        />
-      </div>
-
-      <div className="panel projects-register">
-        <div className="panel-heading projects-heading">
-          <div>
-            <h3>Expense register</h3>
-            <p>
-              {filteredExpenses.length} record
-              {filteredExpenses.length === 1 ? '' : 's'} displayed
-            </p>
-          </div>
-
-          <div className="exp-filters">
-            <label className="projects-search">
-              <Search size={15} />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search expenses..."
-              />
-            </label>
-
-            <select
-              value={categoryFilter}
-              onChange={(event) => setCategoryFilter(event.target.value)}
-              aria-label="Filter by category"
-            >
-              <option value="all">All categories</option>
-              {CATEGORIES.map((category) => (
-                <option key={category.label} value={category.label}>
-                  {category.label}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-              aria-label="Filter by status"
-            >
-              <option value="all">All statuses</option>
-              <option value="Paid">Paid</option>
-              <option value="Partially Paid">Partially paid</option>
-              <option value="Unpaid">Unpaid</option>
-            </select>
-          </div>
-        </div>
-
-        {filteredExpenses.length === 0 ? (
-          <div className="projects-empty">
-            <div className="projects-empty-icon">
-              <ReceiptText size={24} />
-            </div>
-            <h3>
-              {expenses.length ? 'No matching expenses' : 'No expenses recorded yet'}
-            </h3>
-            <p>
-              {expenses.length
-                ? 'Try another search term or filter.'
-                : 'Record your first operating expense to start tracking payments and payables.'}
-            </p>
-            {!expenses.length && (
-              <div
-                className="projects-header-actions"
-                style={{ justifyContent: 'center' }}
-              >
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={() => setShowForm(true)}
-                >
-                  <Plus size={16} /> Record first expense
-                </button>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="projects-table-wrap">
-            <table className="projects-table">
-              <thead>
-                <tr>
-                  <th>Expense</th>
-                  <th>Date</th>
-                  <th>Category</th>
-                  <th>Supplier</th>
-                  <th>Total amount</th>
-                  <th>Paid</th>
-                  <th>Outstanding</th>
-                  <th>Status</th>
-                  <th />
-                </tr>
-              </thead>
-
-              <tbody>
-                {filteredExpenses.map((expense) => {
-                  const status = expenseStatus(expense);
-                  const progress =
-                    expense.amount > 0
-                      ? Math.min((paidAmount(expense) / expense.amount) * 100, 100)
-                      : 0;
-
-                  return (
-                    <tr key={expense.id}>
-                      <td style={{ minWidth: 180 }}>
-                        <strong>{expense.description}</strong>
-                        <span className="exp-sub">{expense.expenseNumber}</span>
-                      </td>
-                      <td className="money-cell">{formatDate(expense.date)}</td>
-                      <td>{expense.category}</td>
-                      <td>{expense.supplier || '—'}</td>
-                      <td className="money-cell">{money(expense.amount)}</td>
-                      <td>
-                        <div className="received-cell">
-                          <strong>{money(paidAmount(expense))}</strong>
-                          <div className="progress-track">
-                            <i style={{ width: `${progress}%` }} />
-                          </div>
-                          <small>{progress.toFixed(0)}% paid</small>
-                        </div>
-                      </td>
-                      <td className="money-cell">
-                        <strong>{money(balance(expense))}</strong>
-                      </td>
-                      <td>
-                        <span className={`project-status ${statusClass(status)}`}>
-                          {statusIcon(status)}
-                          {status}
-                        </span>
-                      </td>
-                      <td>
-                        <div className="project-row-actions">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedExpense(expense)}
-                            aria-label={`View ${expense.expenseNumber}`}
-                            title="View expense"
-                          >
-                            <Eye size={15} />
-                          </button>
-
-                          {balance(expense) > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => openPayment(expense)}
-                              aria-label={`Record payment for ${expense.expenseNumber}`}
-                              title="Record payment"
-                            >
-                              <CreditCard size={15} />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="exp-note">
-        <strong>Accounting integration:</strong> expense records and their
-        payments are posted to the ledger from this module.{' '}
-        <strong>{expenseLedgerEntries.length}</strong> ledger entr
-        {expenseLedgerEntries.length === 1 ? 'y is' : 'ies are'} associated
-        with expense transactions.
-      </div>
-
-      {showForm && (
-        <Modal
-          eyebrow="NEW EXPENSE"
-          title="Record new expense"
-          onClose={closeForm}
-        >
-          {error && (
-            <p className="projects-validation" role="alert">
-              {error}
-            </p>
-          )}
-
-          <div className="projects-form-grid">
-            <label className="projects-field">
-              Expense date *
-              <input
-                type="date"
-                value={form.date}
-                onChange={(event) =>
-                  setForm({ ...form, date: event.target.value })
-                }
-              />
-            </label>
-
-            <label className="projects-field">
-              Expense category *
-              <select
-                value={form.category}
-                onChange={(event) =>
-                  setForm({ ...form, category: event.target.value })
-                }
-              >
-                {CATEGORIES.map((category) => (
-                  <option key={category.label} value={category.label}>
-                    {category.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="projects-field">
-              Description *
-              <input
-                value={form.description}
-                onChange={(event) =>
-                  setForm({ ...form, description: event.target.value })
-                }
-                placeholder="Describe the expense"
-              />
-            </label>
-
-            <label className="projects-field">
-              Supplier / recipient
-              <input
-                value={form.supplier}
-                onChange={(event) =>
-                  setForm({ ...form, supplier: event.target.value })
-                }
-                placeholder="Supplier or recipient name"
-              />
-            </label>
-
-            <label className="projects-field">
-              Total expense amount (RWF) *
-              <input
-                type="number"
-                min="1"
-                value={form.amount || ''}
-                onChange={(event) =>
-                  setForm({ ...form, amount: Number(event.target.value) })
-                }
-                placeholder="Total expense"
-              />
-            </label>
-
-            <label className="projects-field">
-              Amount paid now (RWF)
-              <input
-                type="number"
-                min="0"
-                value={form.amountPaid || ''}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    amountPaid: Number(event.target.value),
-                  })
-                }
-                placeholder="Amount paid"
-              />
-            </label>
-
-            <label className="projects-field">
-              Payment method
-              <select
-                value={form.paymentMethod}
-                onChange={(event) =>
-                  setForm({ ...form, paymentMethod: event.target.value })
-                }
-              >
-                <option>Cash</option>
-                <option>Bank transfer</option>
-                <option>Mobile money</option>
-                <option>Cheque</option>
-              </select>
-            </label>
-
-            <label className="projects-field">
-              Payment reference
-              <input
-                value={form.reference}
-                onChange={(event) =>
-                  setForm({ ...form, reference: event.target.value })
-                }
-                placeholder="Receipt or transaction reference"
-              />
-            </label>
-
-            <label className="projects-field field-wide">
-              Notes
-              <textarea
-                value={form.notes}
-                onChange={(event) =>
-                  setForm({ ...form, notes: event.target.value })
-                }
-                placeholder="Additional information"
-                rows={3}
-              />
-            </label>
-          </div>
-
-          {form.amount > 0 && (
-            <div className="exp-summary neutral">
-              <div>
-                Total expense: <strong>{money(form.amount)}</strong>
-              </div>
-              <div>
-                Paid now: <strong>{money(form.amountPaid)}</strong>
-              </div>
-              <div>
-                Remaining payable:{' '}
-                <strong>{money(Math.max(form.amount - form.amountPaid, 0))}</strong>
-              </div>
-            </div>
-          )}
-
-          <div className="projects-form-actions">
-            <button type="button" className="projects-cancel" onClick={closeForm}>
-              Cancel
-            </button>
-            <button type="button" className="primary-button" onClick={saveExpense}>
-              <Plus size={16} /> Save expense
-            </button>
-          </div>
-        </Modal>
-      )}
-
-      {paymentExpense && (
-        <Modal
-          eyebrow={`${paymentExpense.expenseNumber} · ${paymentExpense.description}`}
-          title="Record expense payment"
-          onClose={closePayment}
-        >
-          {error && (
-            <p className="projects-validation" role="alert">
-              {error}
-            </p>
-          )}
-
-          <div className="exp-summary" style={{ marginTop: 0, marginBottom: 14 }}>
-            <div>
-              Outstanding balance:{' '}
-              <strong>{money(balance(paymentExpense))}</strong>
-            </div>
-          </div>
-
-          <div className="projects-form-grid">
-            <label className="projects-field">
-              Payment date *
-              <input
-                type="date"
-                value={paymentForm.date}
-                onChange={(event) =>
-                  setPaymentForm({
-                    ...paymentForm,
-                    date: event.target.value,
-                  })
-                }
-              />
-            </label>
-
-            <label className="projects-field">
-              Payment amount (RWF) *
-              <input
-                type="number"
-                min="1"
-                max={balance(paymentExpense)}
-                value={paymentForm.amount || ''}
-                onChange={(event) =>
-                  setPaymentForm({
-                    ...paymentForm,
-                    amount: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-
-            <label className="projects-field">
-              Payment method
-              <select
-                value={paymentForm.method}
-                onChange={(event) =>
-                  setPaymentForm({
-                    ...paymentForm,
-                    method: event.target.value,
-                  })
-                }
-              >
-                <option>Cash</option>
-                <option>Bank transfer</option>
-                <option>Mobile money</option>
-                <option>Cheque</option>
-              </select>
-            </label>
-
-            <label className="projects-field">
-              Reference
-              <input
-                value={paymentForm.reference}
-                onChange={(event) =>
-                  setPaymentForm({
-                    ...paymentForm,
-                    reference: event.target.value,
-                  })
-                }
-                placeholder="Payment reference"
-              />
-            </label>
-
-            <label className="projects-field field-wide">
-              Notes
-              <textarea
-                value={paymentForm.notes}
-                onChange={(event) =>
-                  setPaymentForm({
-                    ...paymentForm,
-                    notes: event.target.value,
-                  })
-                }
-                rows={3}
-              />
-            </label>
-          </div>
-
-          <div className="projects-form-actions">
-            <button type="button" className="projects-cancel" onClick={closePayment}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="primary-button"
-              onClick={recordAdditionalPayment}
-            >
-              <CreditCard size={16} /> Record payment
-            </button>
-          </div>
-        </Modal>
-      )}
-
-      {selectedExpense && (
-        <Modal
-          eyebrow={selectedExpense.expenseNumber}
-          title={selectedExpense.description}
-          onClose={() => setSelectedExpense(null)}
-        >
-          <span
-            className={`project-status ${statusClass(expenseStatus(selectedExpense))}`}
-          >
-            {statusIcon(expenseStatus(selectedExpense))}
-            {expenseStatus(selectedExpense)}
-          </span>
-
-          <div className="project-detail-grid">
-            <Detail label="Date" value={formatDate(selectedExpense.date)} />
-            <Detail label="Category" value={selectedExpense.category} />
-            <Detail label="Supplier" value={selectedExpense.supplier || '—'} />
-            <Detail label="Total amount" value={money(selectedExpense.amount)} />
-            <Detail label="Amount paid" value={money(paidAmount(selectedExpense))} />
-            <Detail label="Outstanding" value={money(balance(selectedExpense))} />
-            <Detail label="Reference" value={selectedExpense.reference || '—'} />
-            <Detail label="Payment method" value={selectedExpense.paymentMethod} />
-          </div>
-
-          {selectedExpense.notes && (
-            <div className="project-detail-notes">
-              <strong>Notes</strong>
-              <p>{selectedExpense.notes}</p>
-            </div>
-          )}
-
-          <h4 className="exp-section-title">
-            Payment history ({selectedExpense.payments.length})
-          </h4>
-
-          {selectedExpense.payments.length === 0 ? (
-            <p className="exp-empty-inline">No payments have been recorded.</p>
-          ) : (
-            <div className="projects-table-wrap">
-              <table className="projects-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Method</th>
-                    <th>Reference</th>
-                    <th>Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedExpense.payments.map((payment) => (
-                    <tr key={payment.id}>
-                      <td className="money-cell">{formatDate(payment.date)}</td>
-                      <td>{payment.method}</td>
-                      <td>{payment.reference || '—'}</td>
-                      <td className="money-cell">
-                        <strong>{money(payment.amount)}</strong>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div className="projects-form-actions">
-            {balance(selectedExpense) > 0 && (
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => {
-                  const expense = selectedExpense;
-                  setSelectedExpense(null);
-                  openPayment(expense);
-                }}
-              >
-                <CreditCard size={15} /> Record payment
-              </button>
-            )}
-            <button
-              type="button"
-              className="projects-cancel"
-              onClick={() => setSelectedExpense(null)}
-            >
-              Close
-            </button>
-          </div>
-        </Modal>
-      )}
-    </section>
-  );
-}
-
-function Metric({
-  icon,
-  label,
-  value,
-  note,
-  tone,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  note: string;
-  tone: 'green' | 'blue' | 'amber' | 'rose';
+function Kpi({ label, value, note, icon: Icon, tone, progress, negative }: {
+  label: string; value: string; note: string; icon: LucideIcon; tone: Tone; progress?: number; negative?: boolean;
 }) {
   return (
-    <article className={`pj-kpi tone-${tone}`}>
-      <div className="pj-kpi-top">
-        <span className="pj-kpi-icon" aria-hidden="true">
-          {icon}
-        </span>
-        <span className="pj-kpi-label">{label}</span>
+    <article className={`dash-kpi tone-${tone}`}>
+      <div className="dash-kpi-top">
+        <span className="dash-kpi-icon" aria-hidden="true"><Icon size={13} /></span>
+        <span className="dash-kpi-label">{label}</span>
       </div>
-      <div className="pj-kpi-value">{value}</div>
-      <div className="pj-kpi-note">{note}</div>
+      <div className={`dash-kpi-value${negative ? ' negative' : ''}`}>{value}</div>
+      {progress !== undefined && (
+        <div className="dash-kpi-bar" role="img" aria-label={`${progress}% collected`}><i style={{ width: `${progress}%` }} /></div>
+      )}
+      <div className="dash-kpi-note">{note}</div>
     </article>
   );
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="project-detail-item">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
+function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
+  const go = (page: string) => onNavigate?.(page);
 
-function Modal({
-  eyebrow,
-  title,
-  onClose,
-  children,
-}: {
-  eyebrow: string;
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
+  // Make sure costs and invoices recorded before the ledger existed are in the ledger.
+  useEffect(() => { syncStoredProjectCosts(); syncStoredInvoices(); }, []);
+
+  const entries = useLedgerEntries();
+  const projects = useMemo(() => readList<ProjectRow>(PROJECTS_KEY), []);
+  const invoices = useMemo(() => readList<InvoiceRow>(INVOICES_KEY), []);
+
+  // Cash received per project = money received before this system (Projects register)
+  // + client payments recorded on its invoices. Same rule as the Projects page.
+  const invoiceReceipts = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const inv of invoices) {
+      if (inv.voided || !inv.projectId) continue;
+      totals[inv.projectId] = (totals[inv.projectId] ?? 0) + (inv.payments ?? []).reduce((s, p) => s + num(p.amount), 0);
+    }
+    return totals;
+  }, [invoices]);
+  const receivedOf = (p: ProjectRow) => num(p.totalReceived) + (invoiceReceipts[p.id] ?? 0);
+
+  // Portfolio figures come from the Projects register plus invoice payments.
+  const counted = projects.filter(p => p.status !== 'Cancelled');
+  const totalValue = counted.reduce((s, p) => s + num(p.contractValue), 0);
+  const received = counted.reduce((s, p) => s + receivedOf(p), 0);
+  const outstanding = counted.reduce((s, p) => s + Math.max(num(p.contractValue) - receivedOf(p), 0), 0);
+  const activeAll = projects.filter(p => p.status === 'Active');
+  const activeProjects = [...activeAll].sort((a, b) => num(b.contractValue) - num(a.contractValue)).slice(0, 5);
+  const receivedPct = totalValue > 0 ? Math.min(Math.round((received / totalValue) * 100), 100) : 0;
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const todayStr = `${year}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening';
+  const dateLabel = `${WEEKDAYS[now.getDay()]}, ${pad(now.getDate())} ${MONTH_NAMES[now.getMonth()]} ${year}`.toUpperCase();
+
+  // Everything below is read from the ledger by account type.
+  const summary = useMemo(() => {
+    let revenue = 0, expenses = 0, cash = 0, receivables = 0, payables = 0;
+    const inc: number[] = Array(12).fill(0);
+    const exp: number[] = Array(12).fill(0);
+    const costs: Record<string, number> = {};
+    for (const e of entries) {
+      const inYear = e.date.startsWith(`${year}-`);
+      const mi = Number(e.date.slice(5, 7)) - 1;
+      const monthOk = inYear && mi >= 0 && mi < 12;
+      for (const l of e.lines) {
+        const type = getAccount(l.account)?.type;
+        if (type === 'Revenue') { const v = l.credit - l.debit; revenue += v; if (monthOk) inc[mi] += v; }
+        else if (type === 'Expense') { const v = l.debit - l.credit; expenses += v; if (monthOk) exp[mi] += v; }
+        if (CASH_CODES.includes(l.account)) cash += l.debit - l.credit;
+        if (l.account === ACC.receivables) receivables += l.debit - l.credit;
+        if (l.account === ACC.payables) payables += l.credit - l.debit;
+        if (isDirectCost(l.account) && l.projectId) costs[l.projectId] = (costs[l.projectId] ?? 0) + l.debit - l.credit;
+      }
+    }
+    return { revenue, expenses, cash, receivables, payables, inc, exp, costs };
+  }, [entries, year]);
+
+  const net = summary.revenue - summary.expenses;
+  const incomeYear = summary.inc.reduce((s, v) => s + v, 0);
+  const expensesYear = summary.exp.reduce((s, v) => s + v, 0);
+  const netYear = incomeYear - expensesYear;
+
+  const chartData = MONTHS.map((month, i) => ({ month, income: summary.inc[i], expenses: summary.exp[i] }));
+  const hasChartData = summary.inc.some(v => v !== 0) || summary.exp.some(v => v !== 0);
+
+  // Items that need a decision or follow-up, most urgent first.
+  const alerts: Alert[] = [];
+  const overdue = invoices
+    .filter(i => !i.voided)
+    .map(i => ({ i, balance: num(i.amount) - (i.payments ?? []).reduce((s, p) => s + num(p.amount), 0) }))
+    .filter(x => x.balance > 0 && !!x.i.dueDate && x.i.dueDate < todayStr);
+  if (overdue.length) {
+    alerts.push({ key: 'overdue', level: 'warn', title: `${plural(overdue.length, 'overdue invoice')}`, detail: `${money(overdue.reduce((s, x) => s + x.balance, 0))} is past its due date`, page: 'Client Invoices' });
+  }
+  const noReceipts = activeAll.filter(p => num(p.contractValue) > 0 && receivedOf(p) === 0);
+  if (noReceipts.length) {
+    alerts.push({ key: 'noreceipts', level: 'warn', title: `${plural(noReceipts.length, 'active project')} with no payment received`, detail: nameList(noReceipts), page: 'Projects' });
+  }
+  const overspent = counted.filter(p => (summary.costs[p.id] ?? 0) > receivedOf(p));
+  if (overspent.length) {
+    alerts.push({ key: 'overspent', level: 'warn', title: `Recorded costs exceed cash received on ${plural(overspent.length, 'project')}`, detail: nameList(overspent), page: 'Project Costs' });
+  }
+  if (summary.payables > 0) {
+    alerts.push({ key: 'payables', level: 'info', title: 'Supplier balances to pay', detail: `${money(summary.payables)} recorded but not yet paid`, page: 'Project Costs' });
+  }
+  if (summary.cash < 0) {
+    alerts.push({ key: 'cash', level: 'info', title: 'Cash balance is negative', detail: 'Opening balances are not recorded yet', page: 'Cash & Bank' });
+  }
+  const shownAlerts = alerts.slice(0, 4);
+
+  const projectNames = useMemo(() => new Map(projects.map(p => [p.id, p.projectName])), [projects]);
+  const recent = useMemo(
+    () => [...entries]
+      .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 5)
+      .map(e => toTxRow(e, projectNames)),
+    [entries, projectNames],
+  );
+
   return (
-    <div
-      className="projects-modal-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section className="projects-modal" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="projects-modal-header">
-          <div>
-            <div className="eyebrow">{eyebrow}</div>
-            <h3>{title}</h3>
-          </div>
-          <button
-            type="button"
-            className="projects-close"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            <X size={19} />
-          </button>
+    <div className="dash-page">
+      <header className="dash-header">
+        <div>
+          <div className="eyebrow">{dateLabel}</div>
+          <h2>{greeting}</h2>
+          <p>Here is what is happening across your business today.</p>
         </div>
-        {children}
-      </section>
+        <div className="dash-header-actions">
+          <span className="dash-period"><CalendarDays size={15} /> Financial year {year}</span>
+          <button type="button" className="dash-btn-secondary" onClick={() => go('Client Invoices')}><FileText size={15} /> Create invoice</button>
+          <button type="button" className="primary-button" onClick={() => go('Project Costs')}><Plus size={16} /> Record cost</button>
+        </div>
+      </header>
+
+      <div className="dash-layout">
+        <div className="dash-primary">
+          <section aria-labelledby="dash-portfolio">
+            <div className="dash-section-head"><h3 id="dash-portfolio">Portfolio</h3><span>Projects register and invoice payments</span></div>
+            <div className="dash-kpis cols-4">
+              <Kpi label="Total contract value" value={money(totalValue)} note={`${activeAll.length} active of ${plural(projects.length, 'project')}`} icon={Building2} tone="blue" />
+              <Kpi label="Cash received" value={money(received)} note={`${receivedPct}% of contract value collected`} icon={Wallet} tone="green" progress={receivedPct} />
+              <Kpi label="Outstanding receivables" value={money(outstanding)} note={totalValue > 0 ? `${100 - receivedPct}% of contract value still to collect` : 'No contracts registered yet'} icon={CircleDollarSign} tone="amber" />
+              <Kpi label="Active projects" value={String(activeAll.length)} note={`${projects.length - activeAll.length} completed, on hold or cancelled`} icon={Briefcase} tone="slate" />
+            </div>
+          </section>
+
+          <section aria-labelledby="dash-ledger">
+            <div className="dash-section-head"><h3 id="dash-ledger">Cash &amp; accounts</h3><span>From the general ledger</span></div>
+            <div className="dash-kpis cols-3">
+              <Kpi label="Cash & bank" value={money(summary.cash)} note={summary.cash < 0 ? 'Opening balances not recorded yet' : 'Cash, bank and mobile money'} icon={Landmark} tone={summary.cash < 0 ? 'rose' : 'green'} negative={summary.cash < 0} />
+              <Kpi label="Revenue to date" value={money(summary.revenue)} note="Invoices issued and other income" icon={TrendingUp} tone="green" />
+              <Kpi label="Unpaid invoices" value={money(summary.receivables)} note="Invoiced, awaiting payment" icon={CircleDollarSign} tone="amber" />
+              <Kpi label="Recorded expenses" value={money(summary.expenses)} note="Project costs, payroll and other" icon={TrendingDown} tone="blue" />
+              <Kpi label="Supplier payables" value={money(summary.payables)} note="Costs recorded, not yet paid" icon={ReceiptText} tone="amber" />
+              <Kpi label="Net result" value={money(net)} note="Revenue minus expenses to date" icon={Banknote} tone={net < 0 ? 'rose' : 'green'} negative={net < 0} />
+            </div>
+          </section>
+
+          <section className="dash-chart-row">
+            <div className="panel dash-chart-panel">
+              <div className="panel-heading">
+                <div><h3>Financial performance</h3><p>Income and expenses by month</p></div>
+                <span className="dash-year-chip">{year}</span>
+              </div>
+              <div className="dash-legend">
+                <span><i className="legend-dot income-dot" /> Income</span>
+                <span><i className="legend-dot expense-dot" /> Expenses</span>
+              </div>
+              {hasChartData ? (
+                <div className="chart-wrap dash-chart-wrap">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 8, right: 8, left: 6, bottom: 0 }} barGap={4} barCategoryGap="26%">
+                      <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e9edef" />
+                      <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#89938d' }} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#89938d' }} tickFormatter={axisLabel} />
+                      <Tooltip cursor={{ fill: '#f3f5f7' }} formatter={(value, name) => [money(Number(value)), String(name)]} contentStyle={{ border: '1px solid #e8ece8', borderRadius: 12, fontSize: 12 }} />
+                      <Bar dataKey="income" name="Income" fill="#6fd6a0" radius={[6, 6, 6, 6]} maxBarSize={16} />
+                      <Bar dataKey="expenses" name="Expenses" fill="#b3a6f2" radius={[6, 6, 6, 6]} maxBarSize={16} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="dash-empty">No income or expenses recorded for {year} yet.<br />Issue an invoice or record a cost and it will appear here.</div>
+              )}
+              <p className="dash-chart-note">Income is revenue earned (invoices issued and other income). Expenses are project costs, payroll and other recorded expenses. Hover a month for full amounts.</p>
+            </div>
+
+            <div className="dash-analysis">
+              <div className="dash-analysis-head"><h3>More analysis</h3><p>Year to date, {year}</p></div>
+              <div className="dash-analysis-row"><span><i className="legend-dot income-dot" /> Income {year}</span><strong>{money(incomeYear)}</strong></div>
+              <div className="dash-analysis-row"><span><i className="legend-dot expense-dot" /> Expenses {year}</span><strong>{money(expensesYear)}</strong></div>
+              <div className="dash-analysis-row"><span>Net {year}</span><strong className={netYear < 0 ? 'negative' : ''}>{money(netYear)}</strong></div>
+            </div>
+          </section>
+
+          <div className="panel dash-table-panel">
+            <div className="panel-heading">
+              <div><h3>Active projects</h3><p>Largest contracts and cash collected</p></div>
+              <button type="button" className="text-button" onClick={() => go('Projects')}>View all <ArrowUpRight size={14} /></button>
+            </div>
+            {activeProjects.length === 0 ? (
+              <div className="dash-empty">No active projects yet.<br /><button type="button" className="text-button" style={{ margin: '10px auto 0' }} onClick={() => go('Projects')}>Add or import projects <ArrowUpRight size={14} /></button></div>
+            ) : (
+              <div className="dash-table-wrap">
+                <table className="dash-table">
+                  <thead><tr><th>Project</th><th>Client</th><th>Cash collected</th><th className="num">Contract value</th><th className="num">Outstanding</th></tr></thead>
+                  <tbody>
+                    {activeProjects.map(p => {
+                      const contract = num(p.contractValue);
+                      const pct = contract > 0 ? Math.min(Math.round((receivedOf(p) / contract) * 100), 100) : 0;
+                      const left = Math.max(contract - receivedOf(p), 0);
+                      return (
+                        <tr key={p.id} onClick={() => go('Projects')}>
+                          <td>
+                            <div className="dash-proj-cell">
+                              <span className="dash-proj-icon"><Building2 size={16} /></span>
+                              <button type="button" className="dash-proj-btn" onClick={e => { e.stopPropagation(); go('Projects'); }}>
+                                <strong>{p.projectName}</strong>
+                                {p.currentPhase && <small>{p.currentPhase}</small>}
+                              </button>
+                            </div>
+                          </td>
+                          <td>{p.client || '—'}</td>
+                          <td><div className="dash-collect"><span className="dash-track"><i style={{ width: `${pct}%` }} /></span><strong>{pct}%</strong></div></td>
+                          <td className="num"><strong>{money(contract)}</strong></td>
+                          <td className="num">{money(left)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <aside className="dash-rail" aria-label="Shortcuts and activity">
+          <div className="dash-qa-card">
+            <h3>Quick actions</h3>
+            <p>Common tasks</p>
+            <div className="dash-qa-list">
+              <button type="button" className="dash-qa" onClick={() => go('Client Invoices')}><span className="dash-qa-icon"><Plus size={16} /></span><span className="dash-qa-text"><strong>Record income</strong><small>Add a client payment</small></span><ArrowUpRight size={16} /></button>
+              <button type="button" className="dash-qa" onClick={() => go('Project Costs')}><span className="dash-qa-icon"><ReceiptText size={16} /></span><span className="dash-qa-text"><strong>Record expense</strong><small>Capture a business cost</small></span><ArrowUpRight size={16} /></button>
+              <button type="button" className="dash-qa" onClick={() => go('Projects')}><span className="dash-qa-icon"><Building2 size={16} /></span><span className="dash-qa-text"><strong>Add project</strong><small>Register a new contract</small></span><ArrowUpRight size={16} /></button>
+              <button type="button" className="dash-qa" onClick={() => go('Financial Reports')}><span className="dash-qa-icon"><FileText size={16} /></span><span className="dash-qa-text"><strong>View reports</strong><small>Review financial reports</small></span><ArrowUpRight size={16} /></button>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading"><div><h3>Needs attention</h3><p>Items to review</p></div></div>
+            {shownAlerts.length === 0 ? (
+              <div className="dash-attn-ok"><CheckCircle2 size={18} /> All clear. Nothing needs attention right now.</div>
+            ) : (
+              <ul className="dash-attn-list">
+                {shownAlerts.map(a => (
+                  <li key={a.key}>
+                    <button type="button" className={`dash-attn ${a.level}`} onClick={() => go(a.page)}>
+                      <span className="dash-attn-icon" aria-hidden="true">{a.level === 'warn' ? <AlertTriangle size={16} /> : <Info size={16} />}</span>
+                      <span className="dash-attn-text"><strong>{a.title}</strong><small>{a.detail}</small></span>
+                      <ChevronRight size={16} aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="panel">
+            <div className="panel-heading">
+              <div><h3>Recent transactions</h3><p>Latest financial activity</p></div>
+              <button type="button" className="text-button" onClick={() => go('Transactions')}>See all <ArrowUpRight size={14} /></button>
+            </div>
+            {recent.length === 0 ? (
+              <div className="dash-empty">No transactions yet.<br />Issue an invoice or record a cost to see activity here.</div>
+            ) : (
+              <div className="transaction-list">
+                {recent.map(t => (
+                  <div className="transaction-row" key={t.key}>
+                    <div className={`transaction-icon ${t.type}`}>{t.type === 'in' ? <ArrowDownRight size={17} /> : <ArrowUpRight size={17} />}</div>
+                    <div className="transaction-info"><strong>{t.title}</strong><span>{t.detail}</span></div>
+                    <div className={`transaction-amount ${t.type}`}>{t.amount}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </aside>
+      </div>
+
+      <p className="dash-source-note"><span className="demo-dot" /> Portfolio figures come from the Projects register plus client payments on invoices. Cash, income, expenses and balances come from the general ledger.</p>
     </div>
   );
 }
+export default Dashboard;
