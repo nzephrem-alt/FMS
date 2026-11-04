@@ -14,7 +14,7 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { ACC } from '../lib/accounts';
-import { ledger, type JournalEntry } from '../lib/ledger';
+import { ledger, type JournalEntry, type JournalLineInput } from '../lib/ledger';
 
 const STORAGE_KEY = 'ista-fortis-expenses-v1';
 
@@ -247,7 +247,7 @@ const EXPENSES_CSS = `
 
 export default function Expenses() {
   const [expenses, setExpenses] = useState<Expense[]>(readExpenses);
-  const [entries, setEntries] = useState<JournalEntry[]>(() =>
+  const [entries, setEntries] = useState<readonly JournalEntry[]>(() =>
     ledger.getEntries()
   );
 
@@ -410,7 +410,7 @@ export default function Expenses() {
     };
 
     try {
-      const lines = [
+      const lines: JournalLineInput[] = [
         {
           account: category.account,
           debit: form.amount,

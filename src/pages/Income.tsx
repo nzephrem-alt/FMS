@@ -200,7 +200,7 @@ export default function Income() {
     readStored<Invoice[]>(INVOICES_KEY, [])
   );
 
-  const [entries, setEntries] = useState<JournalEntry[]>(() =>
+  const [entries, setEntries] = useState<readonly JournalEntry[]>(() =>
     ledger.getEntries()
   );
 
