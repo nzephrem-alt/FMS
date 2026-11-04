@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Download, Printer, CheckCircle2, AlertTriangle, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
 import { ACC, ACCOUNTS, getAccount, isDebitNormal, isDirectCost } from '../lib/accounts';
 import type { Account, AccountType } from '../lib/accounts';
-import { syncStoredProjectCosts } from '../lib/postings';
+import { syncStoredInvoices, syncStoredProjectCosts } from '../lib/postings';
 import { useLedgerEntries } from '../lib/useLedger';
 import type { JournalEntry } from '../lib/ledger';
 
@@ -17,7 +17,7 @@ type CsvRow = (string | number)[];
 type Line = { code: string; name: string; amount: number };
 type Totals = Map<string, { debit: number; credit: number }>;
 type ProjectRow = { id: string; projectName: string; client: string; contractValue: number; totalReceived: number; status: string };
-type InvoiceRow = { invoiceNumber: string; client: string; amount: number; dueDate: string; voided?: boolean; payments?: { amount: number }[] };
+type InvoiceRow = { invoiceNumber: string; client: string; amount: number; dueDate: string; projectId?: string; voided?: boolean; payments?: { amount: number; date?: string }[] };
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'income', label: 'Income statement' },
@@ -241,8 +241,8 @@ const REPORTS_CSS = `
 `;
 
 export default function FinancialReports() {
-  // Make sure project costs saved before the ledger existed are in the ledger.
-  useEffect(() => { syncStoredProjectCosts(); }, []);
+  // Make sure project costs and invoices saved before the ledger existed are in the ledger.
+  useEffect(() => { syncStoredProjectCosts(); syncStoredInvoices(); }, []);
 
   const entries = useLedgerEntries();
   const projects = useMemo(() => readList<ProjectRow>(PROJECTS_KEY), []);
@@ -331,9 +331,19 @@ export default function FinancialReports() {
         if (isDirectCost(l.account) && l.projectId) costsByProject[l.projectId] = (costsByProject[l.projectId] ?? 0) + l.debit - l.credit;
       }
     }
+    // Cash received per project = amount received before the system (Projects register)
+    // + client payments recorded on its invoices up to the end date (same rule as the Projects page).
+    const invoiceReceipts: Record<string, number> = {};
+    for (const inv of invoices) {
+      if (inv.voided || !inv.projectId) continue;
+      for (const pay of inv.payments ?? []) {
+        if (range.to && pay.date && pay.date > range.to) continue;
+        invoiceReceipts[inv.projectId] = (invoiceReceipts[inv.projectId] ?? 0) + (Number(pay.amount) || 0);
+      }
+    }
     const projectRows = projects.map(p => {
       const contract = Number(p.contractValue) || 0;
-      const received = Number(p.totalReceived) || 0;
+      const received = (Number(p.totalReceived) || 0) + (invoiceReceipts[p.id] ?? 0);
       const costs = costsByProject[p.id] ?? 0;
       return { id: p.id, name: p.projectName, client: p.client, status: p.status, contract, received, costs, margin: received - costs };
     });
@@ -370,7 +380,7 @@ export default function FinancialReports() {
       projectRows, clientBalances, supplierBalances,
       trialRows, trialDebit, trialCredit,
     };
-  }, [entries, projects, range.from, range.to]);
+  }, [entries, projects, invoices, range.from, range.to]);
 
   // Invoice ageing as at today, from the invoice register
   const ageing = useMemo(() => {
@@ -519,7 +529,7 @@ export default function FinancialReports() {
       {rangeInvalid && <p className="rep-warning no-print" role="alert"><AlertTriangle size={15} /> The start date is after the end date, so no figures can be shown.</p>}
 
       <div className="pj-kpis rep-kpis">
-        <Metric title="Income" value={fmt(data.totalRevenue)} note="Invoices issued in the period" icon={<TrendingUp size={13} />} tone="green" />
+        <Metric title="Income" value={fmt(data.totalRevenue)} note="Revenue earned in the period" icon={<TrendingUp size={13} />} tone="green" />
         <Metric title="Expenses" value={fmt(totalExpenses)} note="Direct costs and operating expenses" icon={<TrendingDown size={13} />} tone="rose" />
         <Metric title="Net profit" value={fmt(data.netProfit)} note="Income minus expenses" icon={<Activity size={13} />} tone="blue" negative={data.netProfit < 0} />
         <Metric title="Net cash movement" value={fmt(data.netCash)} note="Cash, bank and mobile money" icon={<Wallet size={13} />} tone="amber" negative={data.netCash < 0} />
@@ -616,7 +626,7 @@ export default function FinancialReports() {
                   </tbody>
                 </table>
               </div>
-              <p className="rep-note">Cash received comes from the Projects register. Direct costs come from the ledger, so they only include costs recorded in this system. Cash margin is cash received minus direct costs. Rows shaded red have recorded costs above the cash received.</p>
+              <p className="rep-note">Cash received is the amount received before this system (Projects register) plus client payments on invoices up to the end date. Direct costs come from the ledger, so they only include costs recorded in this system. Cash margin is cash received minus direct costs. Rows shaded red have recorded costs above the cash received.</p>
             </>
           )
         )}
@@ -662,7 +672,7 @@ export default function FinancialReports() {
                 <tr className="rep-total"><td>Total payable</td><td className="num">{fmt(sumOf(data.supplierBalances))}</td></tr>
               </tbody>
             </table>
-            <p className="rep-note">Client balances and ageing include only invoices issued through Client Invoices. Open that page once so your invoices are posted to the ledger.</p>
+            <p className="rep-note">Client balances come from invoices and payments posted to the ledger as at the end date. Invoice ageing is worked out as at today from the invoice register.</p>
           </>
         )}
 
