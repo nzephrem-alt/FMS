@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Download, Printer, CheckCircle2, AlertTriangle, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
 import { ACC, ACCOUNTS, getAccount, isDebitNormal, isDirectCost } from '../lib/accounts';
 import type { Account, AccountType } from '../lib/accounts';
@@ -117,6 +118,98 @@ function downloadCSV(name: string, rows: CsvRow[]) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+/**
+ * Page styles live here so this page is a single file. They mirror the Project Costs page and are
+ * scoped under .projects-module, so they restyle this page only. Existing rep-* class names are kept
+ * so print rules in index.css still apply.
+ */
+const REPORTS_CSS = `
+.projects-module{--lime:#d5f56b;--lime-ink:#1d2b12;--ink:#1c2b22;--muted:#7d8a83;--line:#edf0f1;display:flex;flex-direction:column;gap:22px;color:var(--ink)}
+.projects-module button:focus-visible{outline:2px solid #2f8f6b;outline-offset:2px}
+
+/* header */
+.projects-module .welcome-row{margin-bottom:0;gap:20px;flex-wrap:wrap;align-items:flex-end}
+.projects-module .welcome-row h2{font-size:28px;font-weight:700;letter-spacing:-.4px;margin:6px 0 4px;color:var(--ink)}
+.projects-module .welcome-row p{font-size:13px;color:var(--muted)}
+.projects-module .rep-actions{display:flex;flex-wrap:wrap;gap:10px}
+.projects-module .projects-secondary-button{height:39px;padding:0 14px;display:inline-flex;align-items:center;gap:6px;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--ink);font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.projects-module .projects-secondary-button:hover{background:#f4f7f6}
+.projects-module .primary-button{height:39px;border-radius:12px;background:var(--lime);color:var(--lime-ink);font-size:12px;font-weight:600;box-shadow:none}
+.projects-module .primary-button:hover{background:#c8ea52}
+
+/* pastel KPI cards */
+.pj-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.pj-kpi{--bg:#bdeed6;--fg:#1f7a4f;display:flex;flex-direction:column;background:var(--bg);border-radius:16px;padding:14px 16px 16px;text-align:center;container-type:inline-size;transition:transform .15s ease,box-shadow .15s ease}
+.pj-kpi:hover{transform:translateY(-1px);box-shadow:0 8px 20px #1c2b2214}
+.pj-kpi.tone-green{--bg:#bdeed6;--fg:#1f7a4f}
+.pj-kpi.tone-blue{--bg:#c9defb;--fg:#3a66ad}
+.pj-kpi.tone-amber{--bg:#fde5c4;--fg:#a8691f}
+.pj-kpi.tone-rose{--bg:#fbd6db;--fg:#b04a58}
+.pj-kpi-top{display:flex;align-items:center;gap:8px;min-height:24px}
+.pj-kpi-icon{width:22px;height:22px;border-radius:50%;background:#ffffffb3;color:var(--fg);display:grid;place-items:center;flex-shrink:0}
+.pj-kpi-label{font-size:11px;font-weight:600;color:#3d4a43;line-height:1.3;text-align:left}
+.pj-kpi-value{font-weight:700;font-size:clamp(16px,10.5cqw,26px);letter-spacing:-.4px;color:var(--ink);margin:16px 0 6px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pj-kpi.neg .pj-kpi-value{color:#b04a58}
+.pj-kpi-note{font-size:10.5px;color:#4f5d55;margin-top:auto;line-height:1.45}
+
+/* period controls */
+.projects-module .rep-controls{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;padding:16px 20px;margin:0;background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 1px 2px #1c2b2208}
+.projects-module .rep-field{display:flex;flex-direction:column;gap:6px;font-size:11px;font-weight:500;color:#8a968f}
+.projects-module .rep-field select,.projects-module .rep-field input{height:38px;min-width:150px;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--ink);padding:0 10px;font:inherit;font-size:12px}
+.projects-module .rep-field input:disabled{opacity:.5;cursor:not-allowed}
+.projects-module .rep-hint{flex:1 1 220px;margin:0 0 10px;font-size:11.5px;color:var(--muted)}
+.projects-module .rep-warning{display:flex;align-items:center;gap:8px;margin:0;padding:12px 14px;border-radius:12px;background:#fbd6db;color:#b04a58;font-size:12px}
+
+/* report tabs */
+.projects-module .rep-tabs{display:flex;flex-wrap:wrap;gap:4px;padding:5px;width:fit-content;max-width:100%;background:#fff;border:1px solid var(--line);border-radius:14px;margin:0}
+.projects-module .rep-tab{border:0;background:transparent;border-radius:10px;padding:8px 14px;font:inherit;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;white-space:nowrap}
+.projects-module .rep-tab:hover{background:#f4f7f6;color:var(--ink)}
+.projects-module .rep-tab.active{background:var(--lime);color:var(--lime-ink)}
+
+/* report card */
+.projects-module .rep-card{padding:20px 0 6px;margin:0;background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 1px 2px #1c2b2208;overflow:hidden}
+.projects-module .rep-card-head{padding:0 20px 14px}
+.projects-module .rep-card-head h3{font-size:16px;font-weight:600;color:var(--ink);margin:4px 0 2px}
+.projects-module .rep-card-head p{font-size:12px;color:var(--muted);margin:0}
+
+/* report tables */
+.projects-module .rep-table{width:100%;border-collapse:collapse}
+.projects-module .rep-table th,.projects-module .rep-table td{padding:12px 20px;font-size:12px;color:#3b4a42;text-align:left;border:0;border-bottom:1px solid #f1f4f4}
+.projects-module .rep-table thead th{background:transparent;font-size:11px;font-weight:500;color:#8a968f;border-bottom:1px solid var(--line);white-space:nowrap}
+.projects-module .rep-table tbody tr:hover{background:#f7faf9}
+.projects-module .rep-table tbody tr:last-child td{border-bottom:0}
+.projects-module .rep-table .num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.projects-module .rep-table .code{width:72px;color:var(--muted);font-variant-numeric:tabular-nums}
+.projects-module .rep-table td.indent{padding-left:32px}
+.projects-module .rep-table strong{font-size:12px;font-weight:600;color:var(--ink)}
+.projects-module .rep-section th{padding-top:18px;background:transparent;font-size:11px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#1f7a4f;border-bottom:1px solid var(--line)}
+.projects-module .rep-group td{font-weight:600;color:var(--ink);background:#fafcfb}
+.projects-module .rep-none td{color:var(--muted);font-style:italic}
+.projects-module .rep-total td{font-weight:600;color:var(--ink);background:#f7faf9}
+.projects-module .rep-grand td{font-size:12.5px;font-weight:700;color:var(--ink);background:#eef8f2}
+.projects-module .rep-grand.final td{background:#bdeed6;color:#1f6b46}
+.projects-module .rep-grand em{font-style:normal;font-weight:500;color:#4f5d55}
+.projects-module .rep-flag td{background:#fdf1f3}
+.projects-module .rep-sub{display:block;margin-top:3px;font-size:10.5px;color:var(--muted)}
+.projects-module .rep-scroll{overflow-x:auto}
+.projects-module .rep-wide{min-width:720px}
+.projects-module .rep-subhead{font-size:13px;font-weight:600;color:var(--ink);margin:18px 20px 6px}
+
+/* notes and checks */
+.projects-module .rep-check{display:flex;align-items:center;gap:8px;margin:14px 20px;padding:12px 14px;border-radius:12px;font-size:12px}
+.projects-module .rep-check.ok{background:#bdeed6;color:#1f6b46}
+.projects-module .rep-check.bad{background:#fbd6db;color:#b04a58}
+.projects-module .rep-note{margin:12px 20px;padding:12px 14px;border-radius:12px;background:#eef8f2;color:#3f5a4c;font-size:11.5px;line-height:1.6}
+.projects-module .rep-empty{padding:40px 20px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.7}
+.projects-module .rep-source{margin:0;font-size:11.5px;color:var(--muted)}
+
+@media(max-width:1100px){.pj-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:420px){.pj-kpis{grid-template-columns:1fr}}
+@media(max-width:600px){.projects-module .rep-table th,.projects-module .rep-table td{padding-left:14px;padding-right:14px}.projects-module .rep-field select,.projects-module .rep-field input{min-width:0;width:100%}.projects-module .rep-field{flex:1 1 140px}}
+@media(prefers-reduced-motion:reduce){.pj-kpi{transition:none}.pj-kpi:hover{transform:none}}
+@media print{.projects-module{gap:12px}.pj-kpi,.projects-module .rep-card{box-shadow:none;transform:none}.projects-module .rep-card{border:0;border-radius:0}.pj-kpi,.projects-module .rep-grand td,.projects-module .rep-total td,.projects-module .rep-check{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+`;
 
 export default function FinancialReports() {
   // Make sure project costs saved before the ledger existed are in the ledger.
@@ -361,7 +454,8 @@ export default function FinancialReports() {
   );
 
   return (
-    <section className="rep-page financial-reports-page">
+    <section className="projects-module rep-page financial-reports-page">
+      <style>{REPORTS_CSS}</style>
       <div className="rep-print-head print-only">
         <strong>ISTA FORTIS Group Ltd</strong>
         <span>{tabLabel} · {subtitle} · Amounts in RWF</span>
@@ -374,7 +468,7 @@ export default function FinancialReports() {
           <p>Clear visibility into performance, position and cash flow. All amounts are in RWF.</p>
         </div>
         <div className="rep-actions">
-          <button type="button" className="rep-btn" onClick={exportCSV}><Download size={15} /> Export CSV</button>
+          <button type="button" className="projects-secondary-button rep-btn" onClick={exportCSV}><Download size={15} /> Export CSV</button>
           <button type="button" className="primary-button" onClick={() => window.print()}><Printer size={16} /> Print report</button>
         </div>
       </div>
@@ -395,27 +489,11 @@ export default function FinancialReports() {
       </div>
       {rangeInvalid && <p className="rep-warning no-print" role="alert"><AlertTriangle size={15} /> The start date is after the end date, so no figures can be shown.</p>}
 
-      <div className="metrics-grid rep-kpis">
-        <div className="metric-card rep-kpi">
-          <div className="metric-top"><span>Income</span><span className="metric-icon green"><TrendingUp size={17} /></span></div>
-          <div className="metric-value">{fmt(data.totalRevenue)}</div>
-          <div className="metric-note"><span>Invoices issued in the period</span></div>
-        </div>
-        <div className="metric-card rep-kpi">
-          <div className="metric-top"><span>Expenses</span><span className="metric-icon rose"><TrendingDown size={17} /></span></div>
-          <div className="metric-value">{fmt(totalExpenses)}</div>
-          <div className="metric-note"><span>Direct costs and operating expenses</span></div>
-        </div>
-        <div className={`metric-card rep-kpi ${data.netProfit < 0 ? 'neg' : ''}`}>
-          <div className="metric-top"><span>Net profit</span><span className="metric-icon blue"><Activity size={17} /></span></div>
-          <div className="metric-value">{fmt(data.netProfit)}</div>
-          <div className="metric-note"><span>Income minus expenses</span></div>
-        </div>
-        <div className={`metric-card rep-kpi ${data.netCash < 0 ? 'neg' : ''}`}>
-          <div className="metric-top"><span>Net cash movement</span><span className="metric-icon amber"><Wallet size={17} /></span></div>
-          <div className="metric-value">{fmt(data.netCash)}</div>
-          <div className="metric-note"><span>Cash, bank and mobile money</span></div>
-        </div>
+      <div className="pj-kpis rep-kpis">
+        <Metric title="Income" value={fmt(data.totalRevenue)} note="Invoices issued in the period" icon={<TrendingUp size={13} />} tone="green" />
+        <Metric title="Expenses" value={fmt(totalExpenses)} note="Direct costs and operating expenses" icon={<TrendingDown size={13} />} tone="rose" />
+        <Metric title="Net profit" value={fmt(data.netProfit)} note="Income minus expenses" icon={<Activity size={13} />} tone="blue" negative={data.netProfit < 0} />
+        <Metric title="Net cash movement" value={fmt(data.netCash)} note="Cash, bank and mobile money" icon={<Wallet size={13} />} tone="amber" negative={data.netCash < 0} />
       </div>
 
       <div className="rep-tabs no-print" role="tablist" aria-label="Reports">
@@ -590,5 +668,15 @@ function FragmentGroup({ group }: { group: { name: string; rows: Line[]; total: 
       <tr className="rep-group"><td className="code" /><td colSpan={2}>{group.name}</td></tr>
       {group.rows.map(r => <tr key={r.code}><td className="code">{r.code}</td><td className="indent">{r.name}</td><td className="num">{fmt(r.amount)}</td></tr>)}
     </>
+  );
+}
+
+function Metric({ title, value, note, icon, tone, negative = false }: { title: string; value: string; note: string; icon: ReactNode; tone: 'green' | 'blue' | 'amber' | 'rose'; negative?: boolean }) {
+  return (
+    <article className={`pj-kpi tone-${tone}${negative ? ' neg' : ''}`}>
+      <div className="pj-kpi-top"><span className="pj-kpi-icon" aria-hidden="true">{icon}</span><span className="pj-kpi-label">{title}</span></div>
+      <div className="pj-kpi-value">{value}</div>
+      <div className="pj-kpi-note">{note}</div>
+    </article>
   );
 }
