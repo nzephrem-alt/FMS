@@ -132,8 +132,57 @@ const PROJECTS_CSS = `
 .projects-module .import-badge.error{background:#fbd6db;color:#b04a58}
 
 @media(max-width:1100px){.pj-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:420px){.pj-kpis{grid-template-columns:1fr}}
 @media(max-width:600px){.projects-module .projects-table th,.projects-module .projects-table td{padding-left:14px;padding-right:14px}}
+
+/* phones */
+@media(max-width:640px){
+.projects-module{gap:16px}
+.projects-module .welcome-row{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:14px;text-align:left}
+.projects-module .welcome-row>div:first-child{width:100%;margin:0;text-align:left}
+.projects-module .welcome-row h2{font-size:24px}
+.projects-module .welcome-row .projects-header-actions{display:flex;width:100%;gap:10px;margin:0}
+.projects-module .welcome-row .projects-header-actions>button{flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 10px;white-space:nowrap}
+.projects-module .projects-empty .projects-header-actions{flex-wrap:wrap}
+
+.pj-kpis{gap:10px}
+.pj-kpi{padding:12px 12px 14px}
+.pj-kpi-value{font-size:clamp(14px,11cqw,20px);margin:12px 0 4px}
+
+.projects-module .projects-heading{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:0 14px 12px;text-align:left}
+.projects-module .projects-heading p{font-size:12px;margin:2px 0 0}
+.projects-module .projects-filters{display:flex;gap:8px;width:100%;margin:0}
+.projects-module .projects-search{flex:1 1 auto;min-width:0;width:auto;display:flex;align-items:center;gap:6px;padding:0 10px}
+.projects-module .projects-search input{flex:1;min-width:0;width:100%;border:0;outline:0;background:transparent;font:inherit;font-size:12px}
+.projects-module .projects-filters select{flex:0 0 auto;width:auto;min-width:96px;padding:0 8px;background:#fff;color:var(--ink);font:inherit;font-size:12px}
+
+/* project register: one card per project */
+.projects-module .projects-register{padding-bottom:0}
+.projects-module .projects-register .projects-table-wrap{overflow:visible}
+.projects-module .projects-register .projects-table,.projects-module .projects-register .projects-table tbody{display:block;width:100%;min-width:0}
+.projects-module .projects-register .projects-table thead{display:none}
+.projects-module .projects-register .projects-table tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;padding:14px;border-top:1px solid var(--line)}
+.projects-module .projects-register .projects-table tbody tr:hover{background:transparent}
+.projects-module .projects-register .projects-table td{display:block;min-width:0;padding:0;border:0;text-align:left;white-space:normal}
+.projects-module .projects-register .projects-table td[data-label]::before{content:attr(data-label);display:block;margin-bottom:3px;font-size:10.5px;font-weight:500;color:#8a968f}
+.projects-module .projects-register .projects-table td:nth-child(1),.projects-module .projects-register .projects-table td:nth-child(2){grid-column:1/-1}
+.projects-module .projects-register .projects-table td:nth-child(4){grid-column:1/-1;order:1}
+.projects-module .projects-register .projects-table td:nth-child(6){order:2;align-self:center}
+.projects-module .projects-register .projects-table td:nth-child(7){order:3;align-self:center;justify-self:end}
+.projects-module .projects-register .projects-table .money-cell{font-weight:600;color:var(--ink)}
+.projects-module .project-name-button{text-align:left;padding:0}
+.projects-module .project-name-button strong{font-size:13.5px}
+
+/* pop-ups */
+.projects-module .projects-modal-backdrop{padding:10px}
+.projects-module .projects-modal{width:100%;max-width:100%;max-height:calc(100vh - 20px);overflow-y:auto;padding:18px 16px}
+.projects-module .projects-form-grid,.projects-module .project-detail-grid{grid-template-columns:1fr}
+.projects-module .projects-form-grid .field-wide{grid-column:auto}
+.projects-module .projects-form-actions{flex-wrap:wrap}
+.projects-module .projects-form-actions>button{flex:1 1 auto;justify-content:center}
+.projects-module .projects-import-table-wrap{overflow-x:auto}
+.projects-module .projects-import-table{min-width:720px}
+.projects-module .projects-import-file,.projects-module .projects-import-modes,.projects-module .projects-import-summary,.projects-module .projects-import-help{flex-wrap:wrap}
+}
 @media(prefers-reduced-motion:reduce){.pj-kpi{transition:none}.pj-kpi:hover{transform:none}}
 `;
 
@@ -337,10 +386,10 @@ export default function Projects() {
                 const progress = project.contractValue > 0 ? Math.min(received / project.contractValue * 100, 100) : 0;
                 return <tr key={project.id}>
                   <td><button className="project-name-button" onClick={() => setSelectedProject(project)}><strong>{project.projectName}</strong><span>{project.id}</span></button></td>
-                  <td><div className="project-client"><strong>{project.client}</strong><span><MapPin size={12} /> {project.location || 'Location not set'}</span></div></td>
-                  <td className="money-cell">{money(project.contractValue)}</td>
-                  <td><div className="received-cell"><strong>{money(received)}</strong><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><small>{progress.toFixed(0)}% received</small></div></td>
-                  <td className="money-cell">{money(outstanding)}</td>
+                  <td data-label="Client / location"><div className="project-client"><strong>{project.client}</strong><span><MapPin size={12} /> {project.location || 'Location not set'}</span></div></td>
+                  <td className="money-cell" data-label="Contract value">{money(project.contractValue)}</td>
+                  <td data-label="Received"><div className="received-cell"><strong>{money(received)}</strong><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><small>{progress.toFixed(0)}% received</small></div></td>
+                  <td className="money-cell" data-label="Outstanding">{money(outstanding)}</td>
                   <td><span className={`project-status status-${project.status.toLowerCase().replace(' ', '-')}`}>{statusIcon(project.status)}{project.status}</span></td>
                   <td><div className="project-row-actions"><button aria-label={`Edit ${project.projectName}`} title="Edit" onClick={() => openEditForm(project)}><Pencil size={15} /></button><button aria-label={`Delete ${project.projectName}`} title="Delete" onClick={() => deleteProject(project)}><Trash2 size={15} /></button></div></td>
                 </tr>;
