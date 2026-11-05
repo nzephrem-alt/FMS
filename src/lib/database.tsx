@@ -249,6 +249,84 @@ export const TABLES: TableSpec[] = [
       payment: { id: text(r.payment_id), amount: amount(r.amount), date: text(r.payment_date), method: text(r.method), reference: text(r.reference), notes: text(r.notes) },
     }),
   },
+  {
+    // Operating expenses: one row per expense. Its payments are in the next table.
+    table: 'expenses',
+    key: 'ista-fortis-expenses-v1',
+    label: 'Expenses',
+    toRow: (e) => {
+      if (!isObj(e) || typeof e.id !== 'string' || !e.id) return null;
+      return {
+        id: e.id,
+        expense_number: text(e.expenseNumber),
+        expense_date: isoDate(e.date),
+        category: text(e.category),
+        description: text(e.description),
+        supplier: text(e.supplier),
+        amount: amount(e.amount),
+        amount_paid: amount(e.amountPaid),
+        payment_method: text(e.paymentMethod),
+        reference: text(e.reference),
+        notes: text(e.notes),
+        recorded_at: stamp(e.createdAt) ?? new Date().toISOString(),
+      };
+    },
+    fromRow: (r) => ({
+      id: text(r.id),
+      expenseNumber: text(r.expense_number),
+      date: text(r.expense_date),
+      category: text(r.category),
+      description: text(r.description),
+      supplier: text(r.supplier),
+      amount: amount(r.amount),
+      amountPaid: amount(r.amount_paid),
+      paymentMethod: text(r.payment_method),
+      reference: text(r.reference),
+      notes: text(r.notes),
+      payments: [],
+      createdAt: isoStamp(r.recorded_at),
+    }),
+    // The page lists the newest expense first.
+    put: (_stored, items) => [...items].sort((a, b) => text(isObj(b) ? b.createdAt : '').localeCompare(text(isObj(a) ? a.createdAt : ''))),
+  },
+  {
+    // Expense payments: one row per payment made against an expense, kept in the order they were made.
+    table: 'expense_payments',
+    key: 'ista-fortis-expenses-v1',
+    label: 'Expense payments',
+    pick: (stored) => (Array.isArray(stored) ? stored : []).filter(isObj).flatMap((exp) =>
+      (Array.isArray(exp.payments) ? exp.payments : []).filter(isObj).map((p, position) => ({ id: `${text(exp.id)}:${text(p.id)}`, expenseId: text(exp.id), position, payment: p }))),
+    put: (stored, items) => {
+      const byExpense = new Map<string, Row[]>();
+      items.filter(isObj).forEach((i) => byExpense.set(text(i.expenseId), [...(byExpense.get(text(i.expenseId)) ?? []), i]));
+      return (Array.isArray(stored) ? stored : []).map((exp) => {
+        if (!isObj(exp)) return exp;
+        const list = [...(byExpense.get(text(exp.id)) ?? [])].sort((a, b) => whole(a.position) - whole(b.position));
+        return { ...exp, payments: list.map((i) => i.payment) };
+      });
+    },
+    toRow: (i) => {
+      if (!isObj(i) || !isObj(i.payment) || typeof i.id !== 'string') return null;
+      const p = i.payment;
+      return {
+        id: i.id,
+        expense_id: text(i.expenseId),
+        payment_id: text(p.id),
+        position: whole(i.position),
+        amount: amount(p.amount),
+        payment_date: isoDate(p.date),
+        method: text(p.method),
+        reference: text(p.reference),
+        notes: text(p.notes),
+      };
+    },
+    fromRow: (r) => ({
+      id: text(r.id),
+      expenseId: text(r.expense_id),
+      position: whole(r.position),
+      payment: { id: text(r.payment_id), amount: amount(r.amount), date: text(r.payment_date), method: text(r.method), reference: text(r.reference), notes: text(r.notes) },
+    }),
+  },
 ];
 
 const byKey = new Map<string, TableSpec[]>();
