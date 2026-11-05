@@ -8,6 +8,7 @@ import { postProjectCost, reverseProjectCost } from '../lib/postings'; // LEDGER
 import { auditLog } from '../lib/ledger';
 import { LABOUR_TYPES, buildCostPreview, downloadCostTemplate, readCostFile } from '../lib/costImport';
 import type { ImportOptions, ImportSheet, PaymentMethod as ImportMethod } from '../lib/costImport';
+import { useAccess } from '../lib/access';
 
 type CostCategory = 'Labour' | 'Materials' | 'Equipment' | 'Transport' | 'Site expenses' | 'Other';
 type PaymentStatus = 'Paid' | 'Unpaid' | 'Partially paid';
@@ -161,6 +162,7 @@ const COSTS_CSS = `
 `;
 
 export default function ProjectCosts() {
+  const { isAdmin } = useAccess(); // Viewers see the records but no buttons that change them
   const [costs, setCosts] = useState<ProjectCost[]>(loadCosts);
   const [projects] = useState<ProjectOption[]>(loadProjects);
   const [siteStore] = useState<SiteLabourStore>(loadSiteLabour);
@@ -387,15 +389,15 @@ export default function ProjectCosts() {
         <p>Record, monitor and review expenditure across construction projects.</p>
       </div>
       <div className="projects-header-actions">
-        <button className="projects-secondary-button" onClick={openImport} disabled={projects.length === 0} title={projects.length === 0 ? 'Register a project first' : undefined}><Upload size={16} /> <span>Import from Excel</span></button>
-        <button className="primary-button" onClick={openForm}><Plus size={16} /> Record cost</button>
+        {isAdmin && <button className="projects-secondary-button" onClick={openImport} disabled={projects.length === 0} title={projects.length === 0 ? 'Register a project first' : undefined}><Upload size={16} /> <span>Import from Excel</span></button>}
+        {isAdmin && <button className="primary-button" onClick={openForm}><Plus size={16} /> Record cost</button>}
       </div>
     </div>
 
     {notice && <div className="projects-import-notice" role="status"><span>{notice}</span><button onClick={() => setNotice('')} aria-label="Dismiss"><X size={15} /></button></div>}
 
     <div className="pj-kpis">
-      <Metric title="Total recorded costs" value={money(totals.total)} note={`${totals.count} cost record${totals.count === 1 ? '' : 's'}${site.days ? ` + ${site.days} site labour day${site.days === 1 ? '' : 's'}` : ''}`} icon={<TrendingDown size={13} />} tone="rose" />
+      <Metric title="Total recorded costs" value={money(totals.total)} note={`${totals.count} cost record${totals.count === 1 ? '' : 's'}${site.days ? ` + ${site.days} site labour day${site.days === 1 ? '' : 's'}` : ''}`} icon={<TrendingDown size={13} />} tone="blue" />
       <Metric title="Amount paid" value={money(totals.paid)} note={totals.total > 0 ? `${paidPct}% of recorded costs disbursed` : 'Cash already disbursed'} icon={<Wallet size={13} />} tone="green" />
       <Metric title="Outstanding payables" value={money(totals.payable)} note={site.total - site.paid > 0 ? `Includes ${money(site.total - site.paid)} site labour awaiting payment` : 'Recorded costs not yet paid'} icon={<Receipt size={13} />} tone="amber" />
       <Metric title="Projects with costs" value={String(totals.projectsWithCosts)} note={`Out of ${projects.length} registered project${projects.length === 1 ? '' : 's'}`} icon={<FolderKanban size={13} />} tone="blue" />
@@ -434,7 +436,7 @@ export default function ProjectCosts() {
       </div>
 
       {visibleRows.length === 0 ? (
-        <div className="projects-empty"><div className="projects-empty-icon"><Receipt size={24} /></div><h3>{showReversed ? 'No reversed costs' : hasAnyRecords ? 'No matching costs' : 'No project costs recorded yet'}</h3><p>{showReversed ? 'Reversed records will appear here.' : hasAnyRecords ? 'Try another search term or filter.' : projects.length ? 'Record your first project cost, or import your existing costs from an Excel file.' : 'Register a project first. Costs must be assigned to a project.'}</p>{!showReversed && !costs.length && projects.length > 0 && <div className="projects-header-actions" style={{ justifyContent: 'center' }}><button className="projects-secondary-button" onClick={openImport}><Upload size={16} /> <span>Import from Excel</span></button><button className="primary-button" onClick={openForm}><Plus size={16} /> Record first cost</button></div>}</div>
+        <div className="projects-empty"><div className="projects-empty-icon"><Receipt size={24} /></div><h3>{showReversed ? 'No reversed costs' : hasAnyRecords ? 'No matching costs' : 'No project costs recorded yet'}</h3><p>{showReversed ? 'Reversed records will appear here.' : hasAnyRecords ? 'Try another search term or filter.' : !isAdmin ? 'Costs will appear here once the Admin records them.' : projects.length ? 'Record your first project cost, or import your existing costs from an Excel file.' : 'Register a project first. Costs must be assigned to a project.'}</p>{!showReversed && !costs.length && projects.length > 0 && isAdmin && <div className="projects-header-actions" style={{ justifyContent: 'center' }}><button className="projects-secondary-button" onClick={openImport}><Upload size={16} /> <span>Import from Excel</span></button><button className="primary-button" onClick={openForm}><Plus size={16} /> Record first cost</button></div>}</div>
       ) : (
         <div className="projects-table-wrap">
           <table className="projects-table">
@@ -475,7 +477,7 @@ export default function ProjectCosts() {
       )}
     </div>
 
-    {formOpen && <div className="projects-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setFormOpen(false); }}>
+    {formOpen && isAdmin && <div className="projects-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setFormOpen(false); }}>
       <section className="projects-modal" role="dialog" aria-modal="true" aria-labelledby="cost-form-title">
         <div className="projects-modal-header"><div><div className="eyebrow">SITE EXPENDITURE</div><h3 id="cost-form-title">Record project cost</h3></div><button className="projects-close" onClick={() => setFormOpen(false)} aria-label="Close"><X size={19} /></button></div>
         <form onSubmit={saveCost}>
@@ -514,7 +516,7 @@ export default function ProjectCosts() {
         {viewCost.notes && <div className="project-detail-notes"><strong>Notes</strong><p>{viewCost.notes}</p></div>}
         {viewCost.reversed && <p className="projects-validation">Reversed on {viewCost.reversedAt ? new Date(viewCost.reversedAt).toLocaleString() : '—'}</p>}
         <div className="projects-form-actions">
-          {!viewCost.reversed && <button className="projects-cancel" onClick={() => reverseCost(viewCost)}><Ban size={14} /> Reverse record</button>}
+          {!viewCost.reversed && isAdmin && <button className="projects-cancel" onClick={() => reverseCost(viewCost)}><Ban size={14} /> Reverse record</button>}
           <button className="primary-button" onClick={() => setViewCost(null)}>Close</button>
         </div>
       </section>
@@ -546,7 +548,7 @@ export default function ProjectCosts() {
       </section>
     </div>}
 
-    {showImport && <div className="projects-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) closeImport(); }}>
+    {showImport && isAdmin && <div className="projects-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) closeImport(); }}>
       <section className="projects-modal projects-import-modal" role="dialog" aria-modal="true" aria-labelledby="cost-import-title">
         <div className="projects-modal-header"><div><div className="eyebrow">BULK IMPORT</div><h3 id="cost-import-title">Import costs from Excel</h3></div><button className="projects-close" onClick={closeImport} aria-label="Close"><X size={19} /></button></div>
 
