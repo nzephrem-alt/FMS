@@ -8,6 +8,7 @@ import { ACC } from '../lib/accounts';
 import { ledger, auditLog } from '../lib/ledger';
 import { cashAccountFor } from '../lib/postings';
 import { LABOUR_TYPES, detectLabourType } from '../lib/costImport';
+import { useAccess } from '../lib/access';
 
 /* ---------- types and storage ---------- */
 
@@ -199,6 +200,9 @@ const LABOUR_CSS = `
 .projects-module .sl-tick{width:26px;height:26px;border-radius:8px;display:inline-grid;place-items:center;padding:0;cursor:pointer;background:#fff;border:1px solid #d3ddd6;color:#14412c;transition:background .12s ease,border-color .12s ease}
 .projects-module .sl-tick:hover{border-color:#6fd6a0;background:#eef8f2}
 .projects-module .sl-tick.paid{background:#6fd6a0;border-color:#6fd6a0}
+.projects-module .sl-tick.readonly,.projects-module .sl-tick.readonly:disabled{cursor:default;opacity:1}
+.projects-module .sl-tick.readonly:hover{border-color:#d3ddd6;background:#fff}
+.projects-module .sl-tick.readonly.paid:hover{border-color:#6fd6a0;background:#6fd6a0}
 .projects-module .sl-none{color:#c5ccc8}
 .projects-module .sl-sub{display:block;margin-top:3px;font-size:10px;font-weight:500;color:var(--muted)}
 .projects-module .sl-foot-note{padding:12px 20px 14px;font-size:11.5px;color:var(--muted);line-height:1.6}
@@ -289,6 +293,7 @@ const LABOUR_CSS = `
 /* ---------- page ---------- */
 
 export default function SiteLabour() {
+  const { isAdmin } = useAccess(); // Viewers see the sheets and can export them, but not change them
   const [store, setStore] = useState<Store>(loadStore);
   const [projects] = useState<ProjectOption[]>(loadProjects);
   const [projectId, setProjectId] = useState(() => loadProjects()[0]?.id ?? '');
@@ -494,7 +499,7 @@ export default function SiteLabour() {
         </div>
         <div className="sl-actions">
           <button type="button" className="projects-secondary-button" onClick={() => setPrintMode({ kind: 'week' })} disabled={!weekEntries.length}><Printer size={15} /> Export week PDF</button>
-          <button type="button" className="primary-button" onClick={() => openEditor(today >= weekStart && today <= weekEnd ? today : weekStart)} disabled={!projectId}><Plus size={16} /> Record day</button>
+          {isAdmin && <button type="button" className="primary-button" onClick={() => openEditor(today >= weekStart && today <= weekEnd ? today : weekStart)} disabled={!projectId}><Plus size={16} /> Record day</button>}
         </div>
       </div>
 
@@ -524,7 +529,7 @@ export default function SiteLabour() {
         <Metric title="Labour this week" value={money(weekTotal)} note={`${weekEntries.length} worker-day${weekEntries.length === 1 ? '' : 's'} recorded`} icon={<HardHat size={13} />} tone="blue" />
         <Metric title="Paid this week" value={money(weekPaid)} note={weekTotal > 0 ? `${Math.round((weekPaid / weekTotal) * 100)}% of this week's labour` : 'Nothing recorded this week'} icon={<Wallet size={13} />} tone="green" />
         <Metric title="Awaiting payment this week" value={money(weekAwaiting)} note={`${weekEntries.filter((e) => !e.paid).length} worker-day${weekEntries.filter((e) => !e.paid).length === 1 ? '' : 's'} not yet paid`} icon={<Clock3 size={13} />} tone="amber" />
-        <Metric title="Awaiting payment, all weeks" value={money(sum(allAwaiting))} note={`${workers.length} worker${workers.length === 1 ? '' : 's'} on site this week`} icon={<Users size={13} />} tone="rose" />
+        <Metric title="Awaiting payment, all weeks" value={money(sum(allAwaiting))} note={`${workers.length} worker${workers.length === 1 ? '' : 's'} on site this week`} icon={<Users size={13} />} tone="amber" />
       </div>
 
       <div className="panel projects-register">
@@ -538,8 +543,8 @@ export default function SiteLabour() {
         {projects.length === 0 ? (
           <Empty icon={<HardHat size={24} />} title="No projects registered yet" message="Register a project first. Labour sheets are recorded per project." />
         ) : workers.length === 0 ? (
-          <Empty icon={<CalendarDays size={24} />} title="No labour recorded this week" message="Record the list your site engineer or foreman shared for a day. You can copy the previous day's workers and change only what is different."
-            action={<button type="button" className="primary-button" onClick={() => openEditor(today >= weekStart && today <= weekEnd ? today : weekStart)}><Plus size={16} /> Record day</button>} />
+          <Empty icon={<CalendarDays size={24} />} title="No labour recorded this week" message={isAdmin ? "Record the list your site engineer or foreman shared for a day. You can copy the previous day's workers and change only what is different." : 'Labour sheets for this week will appear here once the Admin records them.'}
+            action={isAdmin && <button type="button" className="primary-button" onClick={() => openEditor(today >= weekStart && today <= weekEnd ? today : weekStart)}><Plus size={16} /> Record day</button>} />
         ) : (
           <div className="sl-wrap">
             <table className="sl-table">
@@ -555,8 +560,8 @@ export default function SiteLabour() {
                           <b>{WEEKDAYS[i]} {shortDate(d)}</b>
                           {activityOf(d) && <i>{activityOf(d)}</i>}
                           <div className="sl-day-tools">
-                            <button type="button" className="sl-mini" onClick={() => openEditor(d)} title={list.length ? 'Edit this day' : 'Record this day'}>{list.length ? <><Pencil size={11} /> Edit</> : <><Plus size={11} /> Add</>}</button>
-                            {unpaid.length > 0 && <button type="button" className="sl-mini" onClick={() => openPay(unpaid.map((e) => e.id))} title="Pay everyone still unpaid on this day"><Check size={11} /> Pay all</button>}
+                            {isAdmin && <button type="button" className="sl-mini" onClick={() => openEditor(d)} title={list.length ? 'Edit this day' : 'Record this day'}>{list.length ? <><Pencil size={11} /> Edit</> : <><Plus size={11} /> Add</>}</button>}
+                            {isAdmin && unpaid.length > 0 && <button type="button" className="sl-mini" onClick={() => openPay(unpaid.map((e) => e.id))} title="Pay everyone still unpaid on this day"><Check size={11} /> Pay all</button>}
                             {list.length > 0 && <button type="button" className="sl-mini" onClick={() => setPrintMode({ kind: 'day', date: d })} title="Export this day as PDF" aria-label={`Export ${shortDate(d)} as PDF`}><Printer size={11} /></button>}
                           </div>
                         </div>
@@ -581,10 +586,11 @@ export default function SiteLabour() {
                           <td key={d}>
                             <span className="sl-cell">
                               <span className="sl-rate">{plain(e.rate)}</span>
-                              <button type="button" className={`sl-tick${e.paid ? ' paid' : ''}`}
+                              <button type="button" className={`sl-tick${e.paid ? ' paid' : ''}${isAdmin ? '' : ' readonly'}`}
+                                disabled={!isAdmin}
                                 onClick={() => (e.paid ? unpay(e) : openPay([e.id]))}
                                 aria-label={`${e.worker}, ${longDate(d)}: ${e.paid ? 'paid' : 'not paid'}`}
-                                title={e.paid ? `Paid ${money(e.rate)} by ${e.paid.method} on ${longDate(e.paid.date)}. Click to remove the payment.` : `${e.category} · ${money(e.rate)}. Click to mark as paid.`}>
+                                title={e.paid ? `Paid ${money(e.rate)} by ${e.paid.method} on ${longDate(e.paid.date)}.${isAdmin ? ' Click to remove the payment.' : ''}` : `${e.category} · ${money(e.rate)}.${isAdmin ? ' Click to mark as paid.' : ' Not paid yet.'}`}>
                                 {e.paid && <Check size={15} strokeWidth={3} />}
                               </button>
                             </span>
@@ -614,7 +620,7 @@ export default function SiteLabour() {
       </div>
 
       {/* ---------- day editor ---------- */}
-      {editor && (
+      {editor && isAdmin && (
         <div className="projects-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setEditor(null); }}>
           <section className="projects-modal sl-editor" role="dialog" aria-modal="true" aria-labelledby="sl-editor-title">
             <div className="projects-modal-header">
@@ -675,7 +681,7 @@ export default function SiteLabour() {
       )}
 
       {/* ---------- pay dialog ---------- */}
-      {payDialog && (
+      {payDialog && isAdmin && (
         <div className="projects-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setPayDialog(null); }}>
           <section className="projects-modal" style={{ width: 'min(440px,100%)' }} role="dialog" aria-modal="true" aria-labelledby="sl-pay-title">
             <div className="projects-modal-header">
