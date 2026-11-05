@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { supabase } from '../lib/supabase';
+import { roleLabel, useAccess } from '../lib/access';
 
 import {
   LayoutDashboard,
@@ -138,33 +139,10 @@ function LogoMark() {
   );
 }
 
-/** "ephrem.nzayikorera@x.rw" → "Ephrem Nzayikorera"; uses the name saved on the account when there is one. */
-function displayName(email: string, saved?: unknown): string {
-  if (typeof saved === 'string' && saved.trim()) return saved.trim();
-  const local = email.split('@')[0] ?? '';
-  const words = local.replace(/[._-]+/g, ' ').replace(/\d+/g, ' ').trim().split(/\s+/).filter(Boolean);
-  if (!words.length) return email || 'Signed in';
-  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-}
-
 function initialsOf(name: string): string {
   const parts = name.split(/\s+/).filter(Boolean);
   const letters = parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : (parts[0] ?? '').slice(0, 2);
   return (letters || 'U').toUpperCase();
-}
-
-/** Signed-in user, kept up to date when they sign in or out. */
-function useSignedInUser() {
-  const [user, setUser] = useState<{ email: string; name: string } | null>(null);
-  useEffect(() => {
-    if (!supabase) return;
-    const apply = (u: { email?: string; user_metadata?: Record<string, unknown> } | null | undefined) =>
-      setUser(u ? { email: u.email ?? '', name: displayName(u.email ?? '', u.user_metadata?.full_name) } : null);
-    supabase.auth.getSession().then(({ data }) => apply(data.session?.user));
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => apply(session?.user));
-    return () => data.subscription.unsubscribe();
-  }, []);
-  return user;
 }
 
 function Sidebar({
@@ -173,7 +151,7 @@ function Sidebar({
   mobileOpen,
   setMobileOpen,
 }: SidebarProps) {
-  const user = useSignedInUser();
+  const access = useAccess();
   const [menuOpen, setMenuOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
 
@@ -187,8 +165,9 @@ function Sidebar({
     return () => { document.removeEventListener('mousedown', onClick); document.removeEventListener('keydown', onKey); };
   }, [menuOpen]);
 
-  const name = user?.name ?? 'Signed in';
-  const email = user?.email ?? '';
+  const name = access.name;
+  const email = access.email;
+  const subtitle = access.loading ? email : [access.title, roleLabel(access.role)].filter(Boolean).join(' · ');
 
   return (
     <>
@@ -269,7 +248,7 @@ function Sidebar({
 
             <div className="profile-copy" title={email}>
               <strong>{name}</strong>
-              <span>{email || 'Account'}</span>
+              <span>{subtitle || email || 'Account'}</span>
             </div>
 
             <button
