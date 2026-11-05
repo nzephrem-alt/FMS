@@ -1,4 +1,6 @@
+import { useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
+import { supabase } from '../lib/supabase';
 
 import {
   LayoutDashboard,
@@ -14,6 +16,7 @@ import {
   HardHat,
   FileText,
   ClipboardList,
+  LogOut,
 } from 'lucide-react';
 
 type SidebarProps = {
@@ -104,6 +107,18 @@ const SIDEBAR_CSS = `
 .if-sidebar .avatar{background:var(--brand-deep);color:#fff}
 .if-sidebar .profile-copy strong{color:var(--brand-ink)}
 .if-sidebar .profile-copy span{color:var(--muted)}
+.if-sidebar .profile{position:relative}
+.if-sidebar .profile-copy{min-width:0}
+.if-sidebar .profile-copy strong,.if-sidebar .profile-copy span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.if-sidebar .profile-more{width:32px;height:32px;flex-shrink:0;border:0;border-radius:9px;background:transparent;color:var(--text);display:grid;place-items:center;cursor:pointer}
+.if-sidebar .profile-more:hover,.if-sidebar .profile-more[aria-expanded="true"]{background:var(--brand-tint-2)}
+.if-sidebar .profile-more:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.if-sidebar .profile-menu{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:5;background:#fff;border:1px solid var(--line);border-radius:14px;padding:6px;box-shadow:0 12px 30px #0b3d2a24}
+.if-sidebar .profile-menu-email{padding:8px 10px 10px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);margin-bottom:4px;overflow-wrap:anywhere}
+.if-sidebar .profile-menu button{width:100%;height:38px;display:flex;align-items:center;gap:10px;padding:0 10px;border:0;border-radius:9px;background:transparent;color:var(--text);font:inherit;font-size:13.5px;font-weight:500;text-align:left;cursor:pointer}
+.if-sidebar .profile-menu button:hover{background:var(--brand-tint);color:var(--brand-deep)}
+.if-sidebar .profile-menu button.danger{color:#a63a49}
+.if-sidebar .profile-menu button.danger:hover{background:#fdf0f2;color:#a63a49}
 
 @media(prefers-reduced-motion:reduce){.if-sidebar .nav-item,.if-sidebar .nav-item svg{transition:none}}
 `;
@@ -123,12 +138,58 @@ function LogoMark() {
   );
 }
 
+/** "ephrem.nzayikorera@x.rw" → "Ephrem Nzayikorera"; uses the name saved on the account when there is one. */
+function displayName(email: string, saved?: unknown): string {
+  if (typeof saved === 'string' && saved.trim()) return saved.trim();
+  const local = email.split('@')[0] ?? '';
+  const words = local.replace(/[._-]+/g, ' ').replace(/\d+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return email || 'Signed in';
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+
+function initialsOf(name: string): string {
+  const parts = name.split(/\s+/).filter(Boolean);
+  const letters = parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : (parts[0] ?? '').slice(0, 2);
+  return (letters || 'U').toUpperCase();
+}
+
+/** Signed-in user, kept up to date when they sign in or out. */
+function useSignedInUser() {
+  const [user, setUser] = useState<{ email: string; name: string } | null>(null);
+  useEffect(() => {
+    if (!supabase) return;
+    const apply = (u: { email?: string; user_metadata?: Record<string, unknown> } | null | undefined) =>
+      setUser(u ? { email: u.email ?? '', name: displayName(u.email ?? '', u.user_metadata?.full_name) } : null);
+    supabase.auth.getSession().then(({ data }) => apply(data.session?.user));
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => apply(session?.user));
+    return () => data.subscription.unsubscribe();
+  }, []);
+  return user;
+}
+
 function Sidebar({
   active,
   onNavigate,
   mobileOpen,
   setMobileOpen,
 }: SidebarProps) {
+  const user = useSignedInUser();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  // Close the profile menu on an outside click or Escape.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClick = (e: MouseEvent) => { if (profileRef.current && !profileRef.current.contains(e.target as Node)) setMenuOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false); };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onClick); document.removeEventListener('keydown', onKey); };
+  }, [menuOpen]);
+
+  const name = user?.name ?? 'Signed in';
+  const email = user?.email ?? '';
+
   return (
     <>
       <style>{SIDEBAR_CSS}</style>
@@ -217,15 +278,45 @@ function Sidebar({
             </p>
           </div>
 
-          <div className="profile">
-            <div className="avatar">MD</div>
+          <div className="profile" ref={profileRef}>
+            <div className="avatar" aria-hidden="true">{initialsOf(name)}</div>
 
-            <div className="profile-copy">
-              <strong>Managing Director</strong>
-              <span>Administrator</span>
+            <div className="profile-copy" title={email}>
+              <strong>{name}</strong>
+              <span>{email || 'Account'}</span>
             </div>
 
-            <MoreHorizontal size={18} />
+            <button
+              type="button"
+              className="profile-more"
+              aria-label="Account menu"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              <MoreHorizontal size={18} />
+            </button>
+
+            {menuOpen && (
+              <div className="profile-menu" role="menu">
+                {email && <div className="profile-menu-email">{email}</div>}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setMenuOpen(false); onNavigate('Settings'); setMobileOpen(false); }}
+                >
+                  <Settings size={16} /> Settings
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="danger"
+                  onClick={() => { setMenuOpen(false); void supabase?.auth.signOut(); }}
+                >
+                  <LogOut size={16} /> Sign out
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </aside>
