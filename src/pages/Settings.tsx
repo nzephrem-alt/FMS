@@ -1,20 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
-  UserRound, KeyRound, LogOut, Download, Upload, Database, ShieldCheck, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff,
+  UserRound, KeyRound, LogOut, Database, ShieldCheck, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff,
   Users, UserPlus, Pencil, Trash2, Copy, Check, DatabaseZap,
 } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { roleLabel, useAccess } from '../lib/access';
 import type { Role } from '../lib/access';
-import { saveNow, useDatabase } from '../lib/database';
+import { useDatabase } from '../lib/database';
 
 /* ---------- what this browser stores ---------- */
 
 const PREFIX = 'ista-fortis-';
-const SETTINGS_KEY = 'ista-fortis-settings-v1';
-const BACKUP_APP = 'ista-fortis-fms';
-const BACKUP_VERSION = 1;
 const MIN_PASSWORD = 8;
 
 /** The records the app keeps, with how to count each one. */
@@ -29,9 +26,6 @@ const DATASETS: { key: string; label: string; count: (v: unknown) => number }[] 
   { key: 'ista-fortis-ledger-v1', label: 'Ledger entries', count: listLength },
   { key: 'ista-fortis-audit-v1', label: 'Audit log entries', count: listLength },
 ];
-
-type Backup = { app: string; version: number; exportedAt: string; data: Record<string, string> };
-type Pending = { fileName: string; backup: Backup; counts: { label: string; count: number }[] };
 
 function listLength(v: unknown): number { return Array.isArray(v) ? v.length : 0; }
 function parse(raw: string | null | undefined): unknown { try { return raw ? JSON.parse(raw) : null; } catch { return null; } }
@@ -51,11 +45,6 @@ function countsOf(data: Record<string, string>) {
   return DATASETS.map((d) => ({ label: d.label, count: d.count(parse(data[d.key])) }));
 }
 
-function readSettings(): { lastBackupAt?: string } {
-  const v = parse(localStorage.getItem(SETTINGS_KEY));
-  return v && typeof v === 'object' ? (v as { lastBackupAt?: string }) : {};
-}
-
 const pad = (n: number) => String(n).padStart(2, '0');
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const when = (iso?: string) => {
@@ -63,44 +52,6 @@ const when = (iso?: string) => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
-const daysSince = (iso?: string) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : Infinity);
-const sizeOf = (data: Record<string, string>) => {
-  const bytes = Object.entries(data).reduce((s, [k, v]) => s + (k.length + v.length) * 2, 0);
-  return bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
-};
-
-/** Saves a backup file. Returns the time it was made. */
-function downloadBackup(label = 'backup'): string {
-  const now = new Date();
-  const backup: Backup = { app: BACKUP_APP, version: BACKUP_VERSION, exportedAt: now.toISOString(), data: readAll() };
-  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `ista-fortis-${label}-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  return backup.exportedAt;
-}
-
-/** Checks a file really is an ISTA FORTIS backup before anything is replaced. */
-function validateBackup(text: string): Backup {
-  const v = parse(text) as Partial<Backup> | null;
-  if (!v || typeof v !== 'object') throw new Error('This file is not a valid backup (it could not be read).');
-  if (v.app !== BACKUP_APP) throw new Error('This file is not an ISTA FORTIS backup.');
-  if (typeof v.version !== 'number' || v.version > BACKUP_VERSION) throw new Error('This backup was made by a newer version of the system. Update the app first.');
-  if (!v.data || typeof v.data !== 'object') throw new Error('This backup has no data in it.');
-  const data: Record<string, string> = {};
-  for (const [k, val] of Object.entries(v.data)) {
-    if (!k.startsWith(PREFIX) || typeof val !== 'string') throw new Error('This backup contains unexpected data, so it was not used.');
-    if (val && parse(val) === null) throw new Error(`Part of this backup is damaged (${k}).`);
-    data[k] = val;
-  }
-  if (!Object.keys(data).length) throw new Error('This backup is empty.');
-  return { app: BACKUP_APP, version: v.version, exportedAt: typeof v.exportedAt === 'string' ? v.exportedAt : '', data };
-}
 
 /* ---------- styles ---------- */
 
@@ -214,9 +165,7 @@ export default function Settings() {
   const [pwMsg, setPwMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [signingOut, setSigningOut] = useState(false);
 
-  const [data, setData] = useState<Record<string, string>>(readAll);
-  const [lastBackupAt, setLastBackupAt] = useState(() => readSettings().lastBackupAt);
-  const [pending, setPending] = useState<Pending | null>(null);
+  const [data] = useState<Record<string, string>>(readAll);
   const [dataMsg, setDataMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
@@ -229,7 +178,6 @@ export default function Settings() {
 
   const counts = useMemo(() => countsOf(data), [data]);
   const totalRecords = counts.reduce((s, c) => s + c.count, 0);
-  const backupOverdue = totalRecords > 0 && daysSince(lastBackupAt) >= 7;
 
   /* account */
   const changePassword = async (event: FormEvent<HTMLFormElement>) => {
@@ -257,46 +205,6 @@ export default function Settings() {
     // The app returns to the sign-in page automatically.
   };
 
-  /* backup */
-  const backupNow = () => {
-    setDataMsg(null);
-    try {
-      const at = downloadBackup();
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...readSettings(), lastBackupAt: at }));
-      setLastBackupAt(at);
-      setDataMsg({ kind: 'ok', text: 'Backup downloaded. Keep the file somewhere safe, such as Google Drive or a USB stick.' });
-    } catch {
-      setDataMsg({ kind: 'error', text: 'The backup could not be created. Check that the browser allows downloads.' });
-    }
-  };
-
-  const chooseFile = async (file: File | undefined) => {
-    setDataMsg(null); setPending(null);
-    if (!file) return;
-    try {
-      const backup = validateBackup(await file.text());
-      setPending({ fileName: file.name, backup, counts: countsOf(backup.data) });
-    } catch (e) {
-      setDataMsg({ kind: 'error', text: e instanceof Error ? e.message : 'This file could not be used.' });
-    }
-  };
-
-  const restore = async () => {
-    if (!pending) return;
-    try {
-      // Safety copy of what is here now, in case the wrong file was chosen.
-      if (Object.keys(readAll()).length) downloadBackup('before-restore');
-      Object.keys(readAll()).forEach((k) => localStorage.removeItem(k));
-      Object.entries(pending.backup.data).forEach(([k, v]) => localStorage.setItem(k, v));
-      await saveNow(); // records kept in the database are saved there first
-      // Reload so every page and the ledger read the restored data.
-      window.location.reload();
-    } catch {
-      setDataMsg({ kind: 'error', text: 'The restore could not finish. Browser storage may be full or blocked. Your previous data was saved to a file first.' });
-      setData(readAll());
-    }
-  };
-
   /* one-time move of a section into the database */
   const moveSection = async (table: string) => {
     setDataMsg(null);
@@ -314,7 +222,7 @@ export default function Settings() {
         <div>
           <div className="eyebrow">SYSTEM</div>
           <h2>Settings</h2>
-          <p>Your account, and the data stored in this browser.</p>
+          <p>Your account, your team and the company records.</p>
         </div>
       </div>
 
@@ -359,17 +267,18 @@ export default function Settings() {
 
         {access.isAdmin && <TeamCard currentEmail={access.email} />}
 
-        {/* ---------- data & backup ---------- */}
+        {/* ---------- data ---------- */}
         <section className="st-card wide" aria-labelledby="st-data">
-          <Head icon={<Database size={19} />} tone="amber" id="st-data" title="Data & backup" sub={`Stored in this browser · ${sizeOf(data)} · last backup: ${when(lastBackupAt)}`} />
+          <Head icon={<Database size={19} />} tone="amber" id="st-data" title="Data" sub={`${toMove.length ? 'Partly saved in the database' : 'Saved in the database'} · ${totalRecords.toLocaleString('en-RW')} records`} />
 
-          <p className="st-msg info"><Info size={16} /><span>Your records are saved in this browser only. Another computer or browser starts empty, and clearing browser data deletes them. Download a backup regularly; restore it to move your data to another device.</span></p>
-          {inDb.length > 0 && <p className="st-msg ok"><CheckCircle2 size={16} /><span>{inDb.join(', ')}: saved in the database, so {inDb.length === 1 ? 'it opens' : 'they open'} on any computer you sign in from{access.isAdmin ? ' and every change is saved automatically' : ''}. The other records are still in this browser until they are moved.</span></p>}
+          {toMove.length
+            ? <p className="st-msg warn"><AlertTriangle size={16} /><span>{toMove.map((x) => x.label).join(', ')} {toMove.length === 1 ? 'is' : 'are'} still only on this computer. Move {toMove.length === 1 ? 'it' : 'them'} below so your team can see {toMove.length === 1 ? 'it' : 'them'} and {toMove.length === 1 ? 'it is' : 'they are'} kept safe.</span></p>
+            : inDb.length > 0 && <p className="st-msg ok"><CheckCircle2 size={16} /><span>All records are saved in the database. They open on any computer you sign in from{access.isAdmin ? ', and every change is saved automatically' : ''}.</span></p>}
 
           {toMove.map((x) => (
             <div className="st-box st-move" key={x.table}>
               <h4>Move {x.label.toLowerCase()} to the database</h4>
-              <p>{x.onThisComputer.toLocaleString('en-RW')} {x.label.toLowerCase()} are only on this computer. Do this once, from the computer with your up-to-date records. Afterwards they open on any computer you sign in from, your team can view them, and every change is saved to the database.</p>
+              <p>{x.onThisComputer.toLocaleString('en-RW')} {x.label.toLowerCase()} are only on this computer. Do this once, from the computer with your up-to-date records.</p>
               {moveConfirm !== x.table
                 ? <div className="st-actions"><button type="button" className="st-btn primary" onClick={() => setMoveConfirm(x.table)}><DatabaseZap size={16} /> Move {x.label.toLowerCase()}</button></div>
                 : <>
@@ -382,52 +291,18 @@ export default function Settings() {
             </div>
           ))}
 
-          {backupOverdue && <p className="st-msg warn" role="status"><AlertTriangle size={16} /><span>{lastBackupAt ? `Your last backup was ${daysSince(lastBackupAt)} days ago.` : 'You have not made a backup yet.'} Download one now.</span></p>}
+          {dataMsg && <p className={`st-msg ${dataMsg.kind}`} role={dataMsg.kind === 'error' ? 'alert' : 'status'}>{dataMsg.kind === 'ok' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}<span>{dataMsg.text}</span></p>}
 
           <div className="st-counts">
             {counts.map((c) => <div className="st-count" key={c.label}><b>{c.count.toLocaleString('en-RW')}</b><span>{c.label}</span></div>)}
           </div>
-
-          <div className="st-split">
-            <div className="st-box">
-              <h4>Download a backup</h4>
-              <p>Saves everything on this browser to one file.</p>
-              <div className="st-actions"><button type="button" className="st-btn primary" onClick={backupNow} disabled={!Object.keys(data).length}><Download size={16} /> Download backup</button></div>
-            </div>
-            <div className="st-box">
-              <h4>Restore from a backup</h4>
-              <p>Replaces the data on this browser with the data in a backup file.</p>
-              {inDb.length
-                ? <p>Turned off now that records are kept in the database. Correct records on their own pages instead.</p>
-                : <div className="st-actions">
-                    <label className="st-btn" htmlFor="st-restore-file"><Upload size={16} /> Choose backup file</label>
-                    <input id="st-restore-file" className="st-file" type="file" accept=".json,application/json" onChange={(e) => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
-                  </div>}
-            </div>
-          </div>
-
-          {dataMsg && <p className={`st-msg ${dataMsg.kind}`} role={dataMsg.kind === 'error' ? 'alert' : 'status'}>{dataMsg.kind === 'ok' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}<span>{dataMsg.text}</span></p>}
-
-          {pending && (
-            <div className="st-confirm" role="alertdialog" aria-labelledby="st-confirm-title">
-              <h4 id="st-confirm-title">Replace this browser's data with "{pending.fileName}"?</h4>
-              <p className="st-msg warn"><AlertTriangle size={16} /><span>Backup made on {when(pending.backup.exportedAt || undefined)}. Everything currently on this browser will be replaced. A copy of the current data downloads first, just in case.</span></p>
-              <div className="st-counts">
-                {pending.counts.map((c) => <div className="st-count" key={c.label}><b>{c.count.toLocaleString('en-RW')}</b><span>{c.label}</span></div>)}
-              </div>
-              <div className="st-actions">
-                <button type="button" className="st-btn" onClick={() => setPending(null)}><X size={16} /> Cancel</button>
-                <button type="button" className="st-btn danger-solid" onClick={() => { void restore(); }}><Upload size={16} /> Replace and restore</button>
-              </div>
-            </div>
-          )}
         </section>
 
         {/* ---------- about ---------- */}
         <section className="st-card wide" aria-labelledby="st-about">
           <Head icon={<Info size={19} />} tone="blue" id="st-about" title="About" sub="ISTA FORTIS Group Ltd · Financial Management System" />
           <div className="st-split">
-            <div className="st-row"><span>Records on this browser</span><strong>{totalRecords.toLocaleString('en-RW')}</strong></div>
+            <div className="st-row"><span>Records</span><strong>{totalRecords.toLocaleString('en-RW')}</strong></div>
             <div className="st-row"><span>Currency</span><strong>Rwandan franc (RWF), whole amounts</strong></div>
           </div>
         </section>
