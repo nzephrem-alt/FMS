@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { ACC } from '../lib/accounts';
 import { ledger, type JournalEntry } from '../lib/ledger';
+import { useAccess } from '../lib/access';
 
 type ProjectStatus = 'Active' | 'Completed' | 'On hold' | 'Cancelled';
 
@@ -192,6 +193,7 @@ const INCOME_CSS = `
 `;
 
 export default function Income() {
+  const { isAdmin } = useAccess(); // Viewers see income but cannot record it
   const [projects, setProjects] = useState<Project[]>(() =>
     readStored<Project[]>(PROJECTS_KEY, [])
   );
@@ -464,7 +466,7 @@ export default function Income() {
           <p>Project revenue, client collections and other business income.</p>
         </div>
 
-        <div className="projects-header-actions">
+        {isAdmin && <div className="projects-header-actions">
           <button
             type="button"
             className="primary-button"
@@ -476,7 +478,7 @@ export default function Income() {
           >
             <Plus size={16} /> Record other income
           </button>
-        </div>
+        </div>}
       </div>
 
       {success && (
@@ -648,10 +650,10 @@ export default function Income() {
             message={
               otherIncomeEntries.length
                 ? 'Try another search term or project filter.'
-                : 'Record income that is not a client invoice, such as interest or sundry receipts.'
+                : isAdmin ? 'Record income that is not a client invoice, such as interest or sundry receipts.' : 'Other income will appear here once the Admin records it.'
             }
             action={
-              !otherIncomeEntries.length ? (
+              !otherIncomeEntries.length && isAdmin ? (
                 <button
                   type="button"
                   className="primary-button"
@@ -714,7 +716,7 @@ export default function Income() {
         debit Cash/Bank/Mobile Money and credit Other Income.
       </div>
 
-      {showForm && (
+      {showForm && isAdmin && (
         <div
           className="projects-modal-backdrop"
           role="presentation"
