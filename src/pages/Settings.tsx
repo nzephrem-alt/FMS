@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   UserRound, KeyRound, LogOut, Download, Upload, Database, ShieldCheck, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff,
+  Users, UserPlus, Pencil, Trash2, Copy, Check,
 } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { roleLabel, useAccess } from '../lib/access';
+import type { Role } from '../lib/access';
 
 /* ---------- what this browser stores ---------- */
 
@@ -152,6 +154,35 @@ const SETTINGS_CSS = `
 .st-confirm .st-counts{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
 .st-confirm .st-count{background:#fff}
 .st-file{display:none}
+
+/* team */
+.st-team-form{display:grid;grid-template-columns:1.4fr 1.2fr 1.2fr .8fr auto;gap:10px;align-items:end}
+.st-team-form .st-field input,.st-team-form .st-field select,.st-member-edit input,.st-member-edit select{width:100%;box-sizing:border-box;height:42px;padding:0 12px;border:1px solid #e3e9e5;border-radius:11px;font:inherit;font-size:14px;font-weight:400;color:var(--ink);background:#fff;outline:none}
+.st-team-form .st-field input:focus,.st-team-form .st-field select:focus,.st-member-edit input:focus,.st-member-edit select:focus{border-color:#1a9e6f;box-shadow:0 0 0 3px #1a9e6f22}
+.st-members{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.st-member{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) auto auto auto;gap:14px;align-items:center;padding:14px 16px;border-top:1px solid #f1f4f4}
+.st-member:first-child{border-top:0}
+.st-member-who strong{display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-member-who span{display:block;font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-member-title{font-size:13.5px;color:#3b4a42;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+.st-pill.admin{background:#c9defb;color:#2f5a9c}.st-pill.viewer{background:#eceff0;color:#4f5d55}
+.st-pill.active{background:#bdeed6;color:#1f6b46}.st-pill.invited{background:#fde5c4;color:#8a5516}
+.st-member-actions{display:flex;gap:6px;justify-content:flex-end}
+.st-icon-btn{width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:#fff;color:#4f5d55;cursor:pointer}
+.st-icon-btn:hover:not(:disabled){background:#f1f5f4;color:var(--ink)}
+.st-icon-btn.danger:hover:not(:disabled){background:#fdf0f2;color:#a63a49}
+.st-member-edit{grid-column:1/-1;display:grid;grid-template-columns:1.2fr 1.2fr .8fr auto;gap:10px;align-items:end;padding-top:4px}
+.st-member-confirm{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-radius:12px;background:#fff8f9;border:1px solid #f3c9cf;font-size:13.5px;color:#7a2533}
+.st-invite{border:1px solid #cfe6d6;background:#f3fbf6;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.st-invite pre{margin:0;white-space:pre-wrap;font:inherit;font-size:13.5px;line-height:1.6;color:#2b3a32}
+@media(max-width:1000px){.st-team-form{grid-template-columns:1fr 1fr}.st-team-form .st-actions{grid-column:1/-1}}
+@media(max-width:700px){
+  .st-team-form,.st-member-edit{grid-template-columns:1fr}
+  .st-member{grid-template-columns:minmax(0,1fr) auto;row-gap:8px}
+  .st-member-title{grid-column:1/-1;order:3}
+  .st-member-actions{grid-column:1/-1;order:4;justify-content:flex-start}
+}
 
 @media(max-width:900px){.st-grid,.st-split{grid-template-columns:1fr}}
 @media(max-width:640px){
@@ -309,6 +340,8 @@ export default function Settings() {
           </form>
         </section>
 
+        {access.isAdmin && <TeamCard currentEmail={access.email} />}
+
         {/* ---------- data & backup ---------- */}
         <section className="st-card wide" aria-labelledby="st-data">
           <Head icon={<Database size={19} />} tone="amber" id="st-data" title="Data & backup" sub={`Stored in this browser · ${sizeOf(data)} · last backup: ${when(lastBackupAt)}`} />
@@ -372,5 +405,181 @@ function Head({ icon, tone, id, title, sub }: { icon: ReactNode; tone: 'green' |
       <span className={`st-icon ${tone}`} aria-hidden="true">{icon}</span>
       <div><h3 id={id}>{title}</h3><p>{sub}</p></div>
     </div>
+  );
+}
+
+/* ---------- team (Admins only) ---------- */
+
+type Member = { email: string; full_name: string | null; title: string | null; role: Role; added_at: string; has_account: boolean; active: boolean };
+type Draft = { email: string; full_name: string; title: string; role: Role };
+const emptyDraft: Draft = { email: '', full_name: '', title: '', role: 'viewer' };
+
+/** Friendly text for errors from Supabase. */
+function teamError(message: string, code?: string): string {
+  if (code === '23505' || /duplicate key/i.test(message)) return 'This email is already on the team list.';
+  if (/at least one admin/i.test(message)) return 'There must be at least one Admin. Make someone else Admin first.';
+  if (/row-level security|permission denied/i.test(message)) return 'Only an Admin can manage the team.';
+  if (/team_members|could not find the function|schema cache/i.test(message)) return 'The team script has not been run in Supabase yet.';
+  if (/failed to fetch|network/i.test(message)) return 'Cannot reach Supabase. Check your internet connection.';
+  return message;
+}
+
+function inviteText(m: { email: string; full_name: string; role: Role }): string {
+  const site = typeof window !== 'undefined' ? window.location.origin : '';
+  const hello = m.full_name.trim() ? `Hello ${m.full_name.trim()},` : 'Hello,';
+  const access = m.role === 'admin' ? 'Admin access' : 'view-only access';
+  return `${hello}\n\nYou have been given ${access} to the ISTA FORTIS Financial Management System.\n\n1. Open ${site}\n2. Choose "Create account" and use this email: ${m.email}\n3. Open the confirmation email we send you, then sign in.`;
+}
+
+function TeamCard({ currentEmail }: { currentEmail: string }) {
+  const [members, setMembers] = useState<Member[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [draft, setDraft] = useState<Draft>(emptyDraft);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [invite, setInvite] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Draft>(emptyDraft);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const me = currentEmail.toLowerCase();
+
+  const load = async () => {
+    if (!supabase) return;
+    setLoading(true);
+    const { data, error } = await supabase.rpc('team_members');
+    setLoading(false);
+    if (error) { setMsg({ kind: 'error', text: teamError(error.message, error.code) }); return; }
+    setMembers(((data ?? []) as Member[]).map((m) => ({ ...m, role: m.role === 'admin' ? 'admin' : 'viewer' })));
+  };
+  useEffect(() => { void load(); }, []);
+
+  const add = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setMsg(null); setInvite(''); setCopied(false);
+    if (!supabase) return;
+    const email = draft.email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setMsg({ kind: 'error', text: 'Enter a valid email address.' }); return; }
+    if (members.some((m) => m.email === email)) { setMsg({ kind: 'error', text: 'This email is already on the team list.' }); return; }
+    setBusy(true);
+    const { error } = await supabase.from('allowed_emails').insert({ email, full_name: draft.full_name.trim() || null, title: draft.title.trim() || null, role: draft.role });
+    setBusy(false);
+    if (error) { setMsg({ kind: 'error', text: teamError(error.message, error.code) }); return; }
+    setInvite(inviteText({ email, full_name: draft.full_name, role: draft.role }));
+    setMsg({ kind: 'ok', text: `${email} can now create an account. Send them the message below.` });
+    setDraft(emptyDraft);
+    void load();
+  };
+
+  const startEdit = (m: Member) => {
+    setRemoving(null); setMsg(null);
+    setEditing(m.email);
+    setEditDraft({ email: m.email, full_name: m.full_name ?? '', title: m.title ?? '', role: m.role });
+  };
+
+  const saveEdit = async () => {
+    if (!supabase || !editing) return;
+    setBusy(true);
+    const { error } = await supabase.from('allowed_emails')
+      .update({ full_name: editDraft.full_name.trim() || null, title: editDraft.title.trim() || null, role: editDraft.role })
+      .eq('email', editing);
+    setBusy(false);
+    if (error) { setMsg({ kind: 'error', text: teamError(error.message, error.code) }); return; }
+    setMsg({ kind: 'ok', text: `Saved. ${editing === me ? 'Reload the page to see your changes.' : 'The change applies next time they open the system.'}` });
+    setEditing(null);
+    void load();
+  };
+
+  const remove = async (email: string) => {
+    if (!supabase) return;
+    setBusy(true);
+    const { error } = await supabase.from('allowed_emails').delete().eq('email', email);
+    setBusy(false);
+    setRemoving(null);
+    if (error) { setMsg({ kind: 'error', text: teamError(error.message, error.code) }); return; }
+    setMsg({ kind: 'ok', text: `${email} no longer has access.` });
+    void load();
+  };
+
+  const copyInvite = async (text: string) => {
+    try { await navigator.clipboard.writeText(text); setCopied(true); window.setTimeout(() => setCopied(false), 2500); }
+    catch { setMsg({ kind: 'error', text: 'Copying is blocked by the browser. Select the message and copy it by hand.' }); }
+  };
+
+  return (
+    <section className="st-card wide" aria-labelledby="st-team">
+      <Head icon={<Users size={19} />} tone="green" id="st-team" title="Team" sub="Who can open the system. Viewers can see everything but cannot change anything." />
+
+      <form className="st-team-form" onSubmit={add} noValidate>
+        <label className="st-field">Email *<input type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} placeholder="name@company.com" /></label>
+        <label className="st-field">Name<input value={draft.full_name} onChange={(e) => setDraft({ ...draft, full_name: e.target.value })} placeholder="Full name" /></label>
+        <label className="st-field">Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="e.g. Site engineer" /></label>
+        <label className="st-field">Role
+          <select value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as Role })}>
+            <option value="viewer">Viewer</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <div className="st-actions"><button type="submit" className="st-btn primary" disabled={busy}><UserPlus size={16} /> Add person</button></div>
+      </form>
+
+      {msg && <p className={`st-msg ${msg.kind}`} role={msg.kind === 'error' ? 'alert' : 'status'}>{msg.kind === 'ok' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}<span>{msg.text}</span></p>}
+
+      {invite && (
+        <div className="st-invite">
+          <pre>{invite}</pre>
+          <div className="st-actions"><button type="button" className="st-btn" onClick={() => void copyInvite(invite)}>{copied ? <><Check size={16} /> Copied</> : <><Copy size={16} /> Copy message</>}</button></div>
+        </div>
+      )}
+
+      {loading ? <p className="st-msg info"><Info size={16} /><span>Loading the team…</span></p> : members.length === 0 ? null : (
+        <div className="st-members">
+          {members.map((m) => {
+            const self = m.email === me;
+            const name = m.full_name?.trim() || m.email;
+            return (
+              <div className="st-member" key={m.email}>
+                <div className="st-member-who"><strong>{name}{self && ' (you)'}</strong><span>{m.email}</span></div>
+                <div className="st-member-title">{m.title || '—'}</div>
+                <span className={`st-pill ${m.role}`}>{roleLabel(m.role)}</span>
+                <span className={`st-pill ${m.has_account ? 'active' : 'invited'}`} title={m.has_account ? 'Has created an account' : 'Approved, but has not created an account yet'}>{m.has_account ? 'Active' : 'Invited'}</span>
+                <div className="st-member-actions">
+                  {!m.has_account && <button type="button" className="st-icon-btn" title="Copy invite message" aria-label={`Copy invite message for ${m.email}`} onClick={() => { setInvite(inviteText({ email: m.email, full_name: m.full_name ?? '', role: m.role })); setCopied(false); }}><Copy size={15} /></button>}
+                  <button type="button" className="st-icon-btn" title="Edit" aria-label={`Edit ${m.email}`} onClick={() => startEdit(m)}><Pencil size={15} /></button>
+                  <button type="button" className="st-icon-btn danger" title={self ? 'You cannot remove yourself' : 'Remove access'} aria-label={`Remove ${m.email}`} disabled={self} onClick={() => { setEditing(null); setRemoving(m.email); }}><Trash2 size={15} /></button>
+                </div>
+
+                {editing === m.email && (
+                  <div className="st-member-edit">
+                    <label className="st-field">Name<input value={editDraft.full_name} onChange={(e) => setEditDraft({ ...editDraft, full_name: e.target.value })} /></label>
+                    <label className="st-field">Title<input value={editDraft.title} onChange={(e) => setEditDraft({ ...editDraft, title: e.target.value })} /></label>
+                    <label className="st-field">Role
+                      <select value={editDraft.role} onChange={(e) => setEditDraft({ ...editDraft, role: e.target.value as Role })}>
+                        <option value="viewer">Viewer</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </label>
+                    <div className="st-actions">
+                      <button type="button" className="st-btn" onClick={() => setEditing(null)}>Cancel</button>
+                      <button type="button" className="st-btn primary" onClick={() => void saveEdit()} disabled={busy}>Save</button>
+                    </div>
+                  </div>
+                )}
+
+                {removing === m.email && (
+                  <div className="st-member-confirm" role="alertdialog" aria-label={`Remove ${m.email}`}>
+                    <span>Remove access for <b>{m.email}</b>? {m.has_account ? 'They will be signed out of the system.' : 'They will no longer be able to create an account.'}</span>
+                    <div className="st-actions">
+                      <button type="button" className="st-btn" onClick={() => setRemoving(null)}>Cancel</button>
+                      <button type="button" className="st-btn danger-solid" onClick={() => void remove(m.email)} disabled={busy}><Trash2 size={15} /> Remove access</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
