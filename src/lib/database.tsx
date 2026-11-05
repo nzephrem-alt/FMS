@@ -460,6 +460,36 @@ export const TABLES: TableSpec[] = [
         ...(r.memo ? { memo: text(r.memo) } : {}),
       },
     }),
+  },  {
+    // Audit trail: one row per recorded action (who did what, when). Never changed or deleted.
+    table: 'audit_log',
+    key: 'ista-fortis-audit-v1',
+    label: 'Audit log events',
+    toRow: (e) => {
+      if (!isObj(e) || typeof e.id !== 'string' || !e.id) return null;
+      return {
+        id: e.id,
+        happened_at: stamp(e.at) ?? new Date().toISOString(),
+        actor: text(e.actor),
+        action: text(e.action),
+        entity_type: text(e.entityType),
+        entity_id: text(e.entityId),
+        summary: text(e.summary),
+        details: isObj(e.details) ? e.details : null,
+      };
+    },
+    fromRow: (r) => ({
+      action: text(r.action),
+      entityType: text(r.entity_type),
+      entityId: text(r.entity_id),
+      summary: text(r.summary),
+      ...(isObj(r.details) ? { details: r.details } : {}),
+      id: text(r.id),
+      at: isoStamp(r.happened_at),
+      actor: text(r.actor),
+    }),
+    // Events stay in the order they happened (AUD-000001, AUD-000002, …).
+    put: (_stored, items) => [...items].sort((a, b) => text(isObj(a) ? a.id : '').localeCompare(text(isObj(b) ? b.id : ''))),
   },
 ];
 
