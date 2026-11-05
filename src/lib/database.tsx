@@ -326,6 +326,60 @@ export const TABLES: TableSpec[] = [
       position: whole(r.position),
       payment: { id: text(r.payment_id), amount: amount(r.amount), date: text(r.payment_date), method: text(r.method), reference: text(r.reference), notes: text(r.notes) },
     }),
+  },  {
+    // Staff: one row per person. Salary history is kept as a list in one column.
+    table: 'staff',
+    key: 'ista-fortis-staff-v1',
+    label: 'Staff',
+    toRow: (st) => {
+      if (!isObj(st) || typeof st.id !== 'string' || !st.id) return null;
+      const history = Array.isArray(st.salaryHistory) ? st.salaryHistory.filter(isObj).map((c) => ({ from: text(c.from), amount: amount(c.amount) })) : [];
+      return {
+        id: st.id,
+        name: text(st.name),
+        position: text(st.position),
+        start_month: text(st.startMonth),
+        end_month: text(st.endMonth),
+        salary_history: history,
+        recorded_at: stamp(st.createdAt) ?? new Date().toISOString(),
+      };
+    },
+    fromRow: (r) => ({
+      id: text(r.id),
+      name: text(r.name),
+      position: text(r.position),
+      startMonth: text(r.start_month),
+      endMonth: text(r.end_month),
+      salaryHistory: Array.isArray(r.salary_history) ? r.salary_history.filter(isObj).map((c) => ({ from: text(c.from), amount: amount(c.amount) })) : [],
+      createdAt: isoStamp(r.recorded_at),
+    }),
+  },
+  {
+    // Salary payments: one row per staff member per paid month.
+    table: 'payroll_payments',
+    key: 'ista-fortis-payroll-payments-v1',
+    label: 'Salary payments',
+    toRow: (p) => {
+      if (!isObj(p) || typeof p.id !== 'string' || !p.id) return null;
+      return {
+        id: p.id,
+        staff_id: text(p.staffId),
+        pay_year: whole(p.year),
+        pay_month: whole(p.month),
+        amount: amount(p.amount),
+        method: p.method == null ? null : text(p.method),
+        paid_at: stamp(p.paidAt) ?? new Date().toISOString(),
+      };
+    },
+    fromRow: (r) => ({
+      id: text(r.id),
+      staffId: text(r.staff_id),
+      year: whole(r.pay_year),
+      month: whole(r.pay_month),
+      amount: amount(r.amount),
+      ...(r.method == null ? {} : { method: text(r.method) }),
+      paidAt: isoStamp(r.paid_at),
+    }),
   },
 ];
 
