@@ -6,6 +6,7 @@ import {
   Upload, Download, FileSpreadsheet,
 } from 'lucide-react';
 import { auditLog } from '../lib/ledger';
+import { useAccess } from '../lib/access';
 import { buildPreview, downloadProjectTemplate, readProjectFile } from '../lib/projectImport';
 import type { ImportMode, ProjectRecord, ProjectStatus } from '../lib/projectImport';
 
@@ -187,6 +188,7 @@ const PROJECTS_CSS = `
 `;
 
 export default function Projects() {
+  const { isAdmin } = useAccess(); // Viewers see the records but no buttons that change them
   const [projects, setProjects] = useState<Project[]>(readProjects);
   const [invoiceReceipts, setInvoiceReceipts] = useState<Record<string, number>>(readInvoiceReceipts);
   const [search, setSearch] = useState('');
@@ -349,18 +351,18 @@ export default function Projects() {
           <p>Register projects and monitor contract values and client receipts.</p>
         </div>
         <div className="projects-header-actions">
-          <button className="projects-secondary-button" onClick={openImport}><Upload size={16} /> <span>Import from Excel</span></button>
-          <button className="primary-button" onClick={openNewForm}><Plus size={16} /> New project</button>
+          {isAdmin && <button className="projects-secondary-button" onClick={openImport}><Upload size={16} /> <span>Import from Excel</span></button>}
+          {isAdmin && <button className="primary-button" onClick={openNewForm}><Plus size={16} /> New project</button>}
         </div>
       </div>
 
       {notice && <div className="projects-import-notice" role="status"><span>{notice}</span><button onClick={() => setNotice('')} aria-label="Dismiss"><X size={15} /></button></div>}
 
       <div className="pj-kpis">
-        <Metric title="Total projects" value={String(projects.length)} note={`${projects.length - totals.active} completed, on hold or cancelled`} icon={<FolderKanban size={13} />} tone="green" />
+        <Metric title="Total projects" value={String(projects.length)} note={`${projects.length - totals.active} completed, on hold or cancelled`} icon={<FolderKanban size={13} />} tone="blue" />
         <Metric title="Active projects" value={String(totals.active)} note="Currently under way" icon={<Building2 size={13} />} tone="blue" />
-        <Metric title="Total contract value" value={money(totals.contract)} note={`${money(totals.received)} received so far`} icon={<Banknote size={13} />} tone="amber" />
-        <Metric title="Outstanding receivables" value={money(totals.outstanding)} note={totals.contract > 0 ? `${outstandingPct}% of contract value still to collect` : 'No contracts registered yet'} icon={<Banknote size={13} />} tone="rose" />
+        <Metric title="Total contract value" value={money(totals.contract)} note={`${money(totals.received)} received so far`} icon={<Banknote size={13} />} tone="blue" />
+        <Metric title="Outstanding receivables" value={money(totals.outstanding)} note={totals.contract > 0 ? `${outstandingPct}% of contract value still to collect` : 'No contracts registered yet'} icon={<Banknote size={13} />} tone="amber" />
       </div>
 
       <div className="panel projects-register">
@@ -375,7 +377,7 @@ export default function Projects() {
         </div>
 
         {filteredProjects.length === 0 ? (
-          <div className="projects-empty"><div className="projects-empty-icon"><FolderKanban size={24} /></div><h3>{projects.length ? 'No matching projects' : 'No projects registered yet'}</h3><p>{projects.length ? 'Try another search term or status filter.' : 'Add your first project, or import your existing projects from an Excel file.'}</p>{!projects.length && <div className="projects-header-actions" style={{ justifyContent: 'center' }}><button className="projects-secondary-button" onClick={openImport}><Upload size={16} /> <span>Import from Excel</span></button><button className="primary-button" onClick={openNewForm}><Plus size={16} /> Add first project</button></div>}</div>
+          <div className="projects-empty"><div className="projects-empty-icon"><FolderKanban size={24} /></div><h3>{projects.length ? 'No matching projects' : 'No projects registered yet'}</h3><p>{projects.length ? 'Try another search term or status filter.' : isAdmin ? 'Add your first project, or import your existing projects from an Excel file.' : 'Projects will appear here once the Admin adds them.'}</p>{!projects.length && isAdmin && <div className="projects-header-actions" style={{ justifyContent: 'center' }}><button className="projects-secondary-button" onClick={openImport}><Upload size={16} /> <span>Import from Excel</span></button><button className="primary-button" onClick={openNewForm}><Plus size={16} /> Add first project</button></div>}</div>
         ) : (
           <div className="projects-table-wrap">
             <table className="projects-table">
@@ -391,7 +393,7 @@ export default function Projects() {
                   <td data-label="Received"><div className="received-cell"><strong>{money(received)}</strong><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><small>{progress.toFixed(0)}% received</small></div></td>
                   <td className="money-cell" data-label="Outstanding">{money(outstanding)}</td>
                   <td><span className={`project-status status-${project.status.toLowerCase().replace(' ', '-')}`}>{statusIcon(project.status)}{project.status}</span></td>
-                  <td><div className="project-row-actions"><button aria-label={`Edit ${project.projectName}`} title="Edit" onClick={() => openEditForm(project)}><Pencil size={15} /></button><button aria-label={`Delete ${project.projectName}`} title="Delete" onClick={() => deleteProject(project)}><Trash2 size={15} /></button></div></td>
+                  <td>{isAdmin && <div className="project-row-actions"><button aria-label={`Edit ${project.projectName}`} title="Edit" onClick={() => openEditForm(project)}><Pencil size={15} /></button><button aria-label={`Delete ${project.projectName}`} title="Delete" onClick={() => deleteProject(project)}><Trash2 size={15} /></button></div>}</td>
                 </tr>;
               })}</tbody>
             </table>
@@ -399,7 +401,7 @@ export default function Projects() {
         )}
       </div>
 
-      {showForm && <div className="projects-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setShowForm(false); }}>
+      {showForm && isAdmin && <div className="projects-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setShowForm(false); }}>
         <section className="projects-modal" role="dialog" aria-modal="true" aria-labelledby="project-form-title">
           <div className="projects-modal-header"><div><div className="eyebrow">PROJECT RECORD</div><h3 id="project-form-title">{editingId ? 'Edit project' : 'Register new project'}</h3></div><button className="projects-close" onClick={() => setShowForm(false)} aria-label="Close"><X size={19} /></button></div>
           <form onSubmit={saveProject}>
@@ -435,11 +437,11 @@ export default function Projects() {
             <Detail label="Start date" value={selectedProject.startDate || 'Not specified'} /><Detail label="Expected completion" value={selectedProject.expectedCompletion || 'Not specified'} />
           </div>
           {selectedProject.notes && <div className="project-detail-notes"><strong>Notes</strong><p>{selectedProject.notes}</p></div>}
-          <div className="projects-form-actions"><button className="projects-cancel" onClick={() => deleteProject(selectedProject)}>Delete project</button><button className="primary-button" onClick={() => openEditForm(selectedProject)}><Pencil size={15} /> Edit project</button></div>
+          {isAdmin && <div className="projects-form-actions"><button className="projects-cancel" onClick={() => deleteProject(selectedProject)}>Delete project</button><button className="primary-button" onClick={() => openEditForm(selectedProject)}><Pencil size={15} /> Edit project</button></div>}
         </section>
       </div>}
 
-      {showImport && <div className="projects-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeImport(); }}>
+      {showImport && isAdmin && <div className="projects-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeImport(); }}>
         <section className="projects-modal projects-import-modal" role="dialog" aria-modal="true" aria-labelledby="project-import-title">
           <div className="projects-modal-header"><div><div className="eyebrow">BULK IMPORT</div><h3 id="project-import-title">Import projects from Excel</h3></div><button className="projects-close" onClick={closeImport} aria-label="Close"><X size={19} /></button></div>
 
