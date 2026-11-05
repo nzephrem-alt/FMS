@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   UserRound, KeyRound, LogOut, Download, Upload, Database, ShieldCheck, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff,
-  Users, UserPlus, Pencil, Trash2, Copy, Check,
+  Users, UserPlus, Pencil, Trash2, Copy, Check, DatabaseZap,
 } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { roleLabel, useAccess } from '../lib/access';
 import type { Role } from '../lib/access';
+import { saveNow, useDatabase } from '../lib/database';
 
 /* ---------- what this browser stores ---------- */
 
@@ -149,6 +150,7 @@ const SETTINGS_CSS = `
 .st-box{border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px}
 .st-box h4{margin:0;font-size:15px;font-weight:600}
 .st-box p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.55}
+.st-move{border-color:#cfe7d9;background:#f7fbf8}
 .st-confirm{border:1px solid #f3c9cf;background:#fff8f9;border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px}
 .st-confirm h4{margin:0;font-size:15px}
 .st-confirm .st-counts{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
@@ -198,6 +200,11 @@ const SETTINGS_CSS = `
 
 export default function Settings() {
   const access = useAccess();
+  const db = useDatabase();
+  const toMove = access.isAdmin ? db.sections.filter((x) => !x.inDatabase) : [];
+  const inDb = db.sections.filter((x) => x.inDatabase).map((x) => x.label);
+  const [moving, setMoving] = useState('');
+  const [moveConfirm, setMoveConfirm] = useState('');
   const [email, setEmail] = useState('');
   const [lastSignIn, setLastSignIn] = useState('');
   const [password, setPassword] = useState('');
@@ -274,19 +281,29 @@ export default function Settings() {
     }
   };
 
-  const restore = () => {
+  const restore = async () => {
     if (!pending) return;
     try {
       // Safety copy of what is here now, in case the wrong file was chosen.
       if (Object.keys(readAll()).length) downloadBackup('before-restore');
       Object.keys(readAll()).forEach((k) => localStorage.removeItem(k));
       Object.entries(pending.backup.data).forEach(([k, v]) => localStorage.setItem(k, v));
+      await saveNow(); // records kept in the database are saved there first
       // Reload so every page and the ledger read the restored data.
       window.location.reload();
     } catch {
       setDataMsg({ kind: 'error', text: 'The restore could not finish. Browser storage may be full or blocked. Your previous data was saved to a file first.' });
       setData(readAll());
     }
+  };
+
+  /* one-time move of a section into the database */
+  const moveSection = async (table: string) => {
+    setDataMsg(null);
+    setMoving(table);
+    const problem = await db.moveToDatabase(table); // reloads the page when it works
+    setMoving('');
+    if (problem) setDataMsg({ kind: 'error', text: problem });
   };
 
   return (
@@ -347,6 +364,25 @@ export default function Settings() {
           <Head icon={<Database size={19} />} tone="amber" id="st-data" title="Data & backup" sub={`Stored in this browser · ${sizeOf(data)} · last backup: ${when(lastBackupAt)}`} />
 
           <p className="st-msg info"><Info size={16} /><span>Your records are saved in this browser only. Another computer or browser starts empty, and clearing browser data deletes them. Download a backup regularly; restore it to move your data to another device.</span></p>
+          {inDb.length > 0 && <p className="st-msg ok"><CheckCircle2 size={16} /><span>{inDb.join(', ')}: saved in the database, so {inDb.length === 1 ? 'it opens' : 'they open'} on any computer you sign in from{access.isAdmin ? ' and every change is saved automatically' : ''}. The other records are still in this browser until they are moved.</span></p>}
+
+          {toMove.map((x) => (
+            <div className="st-box st-move" key={x.table}>
+              <h4>Move {x.label.toLowerCase()} to the database</h4>
+              <p>{x.onThisComputer.toLocaleString('en-RW')} {x.label.toLowerCase()} are only on this computer. Do this once, from the computer with your up-to-date records. Afterwards they open on any computer you sign in from, your team can view them, and every change is saved to the database.</p>
+              {moveConfirm !== x.table
+                ? <div className="st-actions"><button type="button" className="st-btn primary" onClick={() => setMoveConfirm(x.table)}><DatabaseZap size={16} /> Move {x.label.toLowerCase()}</button></div>
+                : <>
+                    <p className="st-msg warn"><AlertTriangle size={16} /><span>Download a backup first, and make sure this is the browser with your latest records.</span></p>
+                    <div className="st-actions">
+                      <button type="button" className="st-btn" onClick={backupNow}><Download size={16} /> Download backup</button>
+                      <button type="button" className="st-btn" onClick={() => setMoveConfirm('')} disabled={!!moving}><X size={16} /> Cancel</button>
+                      <button type="button" className="st-btn primary" onClick={() => { void moveSection(x.table); }} disabled={!!moving}><DatabaseZap size={16} /> {moving === x.table ? 'Moving…' : `Move ${x.onThisComputer.toLocaleString('en-RW')} ${x.label.toLowerCase()}`}</button>
+                    </div>
+                  </>}
+            </div>
+          ))}
+
           {backupOverdue && <p className="st-msg warn" role="status"><AlertTriangle size={16} /><span>{lastBackupAt ? `Your last backup was ${daysSince(lastBackupAt)} days ago.` : 'You have not made a backup yet.'} Download one now.</span></p>}
 
           <div className="st-counts">
@@ -380,7 +416,7 @@ export default function Settings() {
               </div>
               <div className="st-actions">
                 <button type="button" className="st-btn" onClick={() => setPending(null)}><X size={16} /> Cancel</button>
-                <button type="button" className="st-btn danger-solid" onClick={restore}><Upload size={16} /> Replace and restore</button>
+                <button type="button" className="st-btn danger-solid" onClick={() => { void restore(); }}><Upload size={16} /> Replace and restore</button>
               </div>
             </div>
           )}
