@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   UserRound, KeyRound, LogOut, Database, ShieldCheck, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff,
@@ -9,41 +9,7 @@ import { roleLabel, useAccess } from '../lib/access';
 import type { Role } from '../lib/access';
 import { useDatabase } from '../lib/database';
 
-/* ---------- what this browser stores ---------- */
-
-const PREFIX = 'ista-fortis-';
 const MIN_PASSWORD = 8;
-
-/** The records the app keeps, with how to count each one. */
-const DATASETS: { key: string; label: string; count: (v: unknown) => number }[] = [
-  { key: 'ista-fortis-projects-v1', label: 'Projects', count: listLength },
-  { key: 'ista-fortis-project-costs-v1', label: 'Project costs', count: listLength },
-  { key: 'ista-fortis-site-labour-v1', label: 'Site labour worker-days', count: (v) => listLength((v as { entries?: unknown })?.entries) },
-  { key: 'ista-fortis-invoices-v1', label: 'Client invoices', count: listLength },
-  { key: 'ista-fortis-expenses-v1', label: 'Expenses', count: listLength },
-  { key: 'ista-fortis-staff-v1', label: 'Staff', count: listLength },
-  { key: 'ista-fortis-payroll-payments-v1', label: 'Salary payments', count: listLength },
-  { key: 'ista-fortis-ledger-v1', label: 'Ledger entries', count: listLength },
-  { key: 'ista-fortis-audit-v1', label: 'Audit log entries', count: listLength },
-];
-
-function listLength(v: unknown): number { return Array.isArray(v) ? v.length : 0; }
-function parse(raw: string | null | undefined): unknown { try { return raw ? JSON.parse(raw) : null; } catch { return null; } }
-
-function readAll(): Record<string, string> {
-  const out: Record<string, string> = {};
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(PREFIX)) out[k] = localStorage.getItem(k) ?? '';
-    }
-  } catch { /* storage blocked */ }
-  return out;
-}
-
-function countsOf(data: Record<string, string>) {
-  return DATASETS.map((d) => ({ label: d.label, count: d.count(parse(data[d.key])) }));
-}
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -93,20 +59,11 @@ const SETTINGS_CSS = `
 .st-msg{display:flex;gap:10px;align-items:flex-start;margin:0;padding:12px 14px;border-radius:12px;font-size:13.5px;line-height:1.5}
 .st-msg svg{flex-shrink:0;margin-top:2px}
 .st-msg.ok{background:#bdeed6;color:#1f6b46}.st-msg.error{background:#fbd6db;color:#8f2d3b}.st-msg.warn{background:#fde5c4;color:#7a4c14}.st-msg.info{background:#eef4fb;color:#2f4f7a}
-.st-counts{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
-.st-count{padding:12px 14px;border-radius:12px;background:#f6f8f7}
-.st-count b{display:block;font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
-.st-count span{font-size:12.5px;color:var(--muted)}
 .st-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
 .st-box{border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px}
 .st-box h4{margin:0;font-size:15px;font-weight:600}
 .st-box p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.55}
 .st-move{border-color:#cfe7d9;background:#f7fbf8}
-.st-confirm{border:1px solid #f3c9cf;background:#fff8f9;border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px}
-.st-confirm h4{margin:0;font-size:15px}
-.st-confirm .st-counts{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
-.st-confirm .st-count{background:#fff}
-.st-file{display:none}
 
 /* team */
 .st-team-form{display:grid;grid-template-columns:1.4fr 1.2fr 1.2fr .8fr auto;gap:10px;align-items:end}
@@ -143,8 +100,7 @@ const SETTINGS_CSS = `
   .st-card{padding:18px 16px}
   .st-input input{font-size:16px}
   .st-actions>.st-btn{flex:1 1 auto}
-  .st-counts{grid-template-columns:repeat(2,minmax(0,1fr))}
-}
+  }
 `;
 
 /* ---------- page ---------- */
@@ -153,7 +109,6 @@ export default function Settings() {
   const access = useAccess();
   const db = useDatabase();
   const toMove = access.isAdmin ? db.sections.filter((x) => !x.inDatabase) : [];
-  const inDb = db.sections.filter((x) => x.inDatabase).map((x) => x.label);
   const [moving, setMoving] = useState('');
   const [moveConfirm, setMoveConfirm] = useState('');
   const [email, setEmail] = useState('');
@@ -165,7 +120,6 @@ export default function Settings() {
   const [pwMsg, setPwMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [signingOut, setSigningOut] = useState(false);
 
-  const [data] = useState<Record<string, string>>(readAll);
   const [dataMsg, setDataMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
@@ -176,8 +130,6 @@ export default function Settings() {
     });
   }, []);
 
-  const counts = useMemo(() => countsOf(data), [data]);
-  const totalRecords = counts.reduce((s, c) => s + c.count, 0);
 
   /* account */
   const changePassword = async (event: FormEvent<HTMLFormElement>) => {
@@ -222,7 +174,7 @@ export default function Settings() {
         <div>
           <div className="eyebrow">SYSTEM</div>
           <h2>Settings</h2>
-          <p>Your account, your team and the company records.</p>
+          <p>Your account, password and team.</p>
         </div>
       </div>
 
@@ -267,45 +219,28 @@ export default function Settings() {
 
         {access.isAdmin && <TeamCard currentEmail={access.email} />}
 
-        {/* ---------- data ---------- */}
-        <section className="st-card wide" aria-labelledby="st-data">
-          <Head icon={<Database size={19} />} tone="amber" id="st-data" title="Data" sub={`${toMove.length ? 'Partly saved in the database' : 'Saved in the database'} · ${totalRecords.toLocaleString('en-RW')} records`} />
-
-          {toMove.length
-            ? <p className="st-msg warn"><AlertTriangle size={16} /><span>{toMove.map((x) => x.label).join(', ')} {toMove.length === 1 ? 'is' : 'are'} still only on this computer. Move {toMove.length === 1 ? 'it' : 'them'} below so your team can see {toMove.length === 1 ? 'it' : 'them'} and {toMove.length === 1 ? 'it is' : 'they are'} kept safe.</span></p>
-            : inDb.length > 0 && <p className="st-msg ok"><CheckCircle2 size={16} /><span>All records are saved in the database. They open on any computer you sign in from{access.isAdmin ? ', and every change is saved automatically' : ''}.</span></p>}
-
-          {toMove.map((x) => (
-            <div className="st-box st-move" key={x.table}>
-              <h4>Move {x.label.toLowerCase()} to the database</h4>
-              <p>{x.onThisComputer.toLocaleString('en-RW')} {x.label.toLowerCase()} are only on this computer. Do this once, from the computer with your up-to-date records.</p>
-              {moveConfirm !== x.table
-                ? <div className="st-actions"><button type="button" className="st-btn primary" onClick={() => setMoveConfirm(x.table)}><DatabaseZap size={16} /> Move {x.label.toLowerCase()}</button></div>
-                : <>
-                    <p className="st-msg warn"><AlertTriangle size={16} /><span>Make sure this is the browser with your latest records.</span></p>
-                    <div className="st-actions">
-                      <button type="button" className="st-btn" onClick={() => setMoveConfirm('')} disabled={!!moving}><X size={16} /> Cancel</button>
-                      <button type="button" className="st-btn primary" onClick={() => { void moveSection(x.table); }} disabled={!!moving}><DatabaseZap size={16} /> {moving === x.table ? 'Moving…' : `Move ${x.onThisComputer.toLocaleString('en-RW')} ${x.label.toLowerCase()}`}</button>
-                    </div>
-                  </>}
-            </div>
-          ))}
-
-          {dataMsg && <p className={`st-msg ${dataMsg.kind}`} role={dataMsg.kind === 'error' ? 'alert' : 'status'}>{dataMsg.kind === 'ok' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}<span>{dataMsg.text}</span></p>}
-
-          <div className="st-counts">
-            {counts.map((c) => <div className="st-count" key={c.label}><b>{c.count.toLocaleString('en-RW')}</b><span>{c.label}</span></div>)}
-          </div>
-        </section>
-
-        {/* ---------- about ---------- */}
-        <section className="st-card wide" aria-labelledby="st-about">
-          <Head icon={<Info size={19} />} tone="blue" id="st-about" title="About" sub="ISTA FORTIS Group Ltd · Financial Management System" />
-          <div className="st-split">
-            <div className="st-row"><span>Records</span><strong>{totalRecords.toLocaleString('en-RW')}</strong></div>
-            <div className="st-row"><span>Currency</span><strong>Rwandan franc (RWF), whole amounts</strong></div>
-          </div>
-        </section>
+        {/* ---------- shown only while some records have not been moved to the database ---------- */}
+        {toMove.length > 0 && (
+          <section className="st-card wide" aria-labelledby="st-data">
+            <Head icon={<Database size={19} />} tone="amber" id="st-data" title="Move to the database" sub="Shown until every record is in the database" />
+            {toMove.map((x) => (
+              <div className="st-box st-move" key={x.table}>
+                <h4>Move {x.label.toLowerCase()} to the database</h4>
+                <p>{x.onThisComputer.toLocaleString('en-RW')} {x.label.toLowerCase()} are only on this computer. Do this once, from the computer with your up-to-date records.</p>
+                {moveConfirm !== x.table
+                  ? <div className="st-actions"><button type="button" className="st-btn primary" onClick={() => setMoveConfirm(x.table)}><DatabaseZap size={16} /> Move {x.label.toLowerCase()}</button></div>
+                  : <>
+                      <p className="st-msg warn"><AlertTriangle size={16} /><span>Make sure this is the browser with your latest records.</span></p>
+                      <div className="st-actions">
+                        <button type="button" className="st-btn" onClick={() => setMoveConfirm('')} disabled={!!moving}><X size={16} /> Cancel</button>
+                        <button type="button" className="st-btn primary" onClick={() => { void moveSection(x.table); }} disabled={!!moving}><DatabaseZap size={16} /> {moving === x.table ? 'Moving…' : `Move ${x.onThisComputer.toLocaleString('en-RW')} ${x.label.toLowerCase()}`}</button>
+                      </div>
+                    </>}
+              </div>
+            ))}
+            {dataMsg && <p className={`st-msg ${dataMsg.kind}`} role={dataMsg.kind === 'error' ? 'alert' : 'status'}>{dataMsg.kind === 'ok' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}<span>{dataMsg.text}</span></p>}
+          </section>
+        )}
       </div>
     </section>
   );
