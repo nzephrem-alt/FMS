@@ -1,0 +1,420 @@
+import { createContext, useCallback, useContext, useEffect, useState, useSyncExternalStore } from 'react';
+import type { ReactNode } from 'react';
+import { Database, Eye, HardDrive, Loader2, RefreshCw, TriangleAlert } from 'lucide-react';
+import { supabase } from './supabase';
+import { useAccess } from './access';
+
+/*
+ * Company records live in Supabase tables, one row per record.
+ * The pages keep reading and writing the browser's storage exactly as before. This file
+ *   1. fills the browser's storage from the tables before the app opens, and
+ *   2. for an Admin, notices each record a page adds, changes or deletes and saves that row.
+ * Viewers only read; the database refuses their changes anyway.
+ * Sections are added to TABLES one at a time; the rest stay in the browser until moved.
+ */
+
+type Row = Record<string, unknown>;
+
+type TableSpec = {
+  table: string; // table in Supabase
+  key: string; // browser storage key the pages use
+  label: string; // shown in Settings
+  /** App record → table row. Null for a record that cannot be saved (no id). */
+  toRow: (item: unknown) => Row | null;
+  /** Table row → app record, with the same fields the pages expect. */
+  fromRow: (row: Row) => unknown;
+};
+
+/* ---------- field helpers ---------- */
+
+const isObj = (v: unknown): v is Row => typeof v === 'object' && v !== null && !Array.isArray(v);
+const text = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v));
+const whole = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n) : 0; };
+const isoDate = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+const PROJECT_STATUSES = ['Active', 'Completed', 'On hold', 'Cancelled'];
+
+/* ---------- the sections kept in the database ---------- */
+
+export const TABLES: TableSpec[] = [
+  {
+    table: 'projects',
+    key: 'ista-fortis-projects-v1',
+    label: 'Projects',
+    toRow: (p) => {
+      if (!isObj(p) || typeof p.id !== 'string' || !p.id) return null;
+      return {
+        id: p.id,
+        project_name: text(p.projectName),
+        location: text(p.location),
+        client: text(p.client),
+        contract_value: whole(p.contractValue),
+        total_received: whole(p.totalReceived),
+        start_date: isoDate(p.startDate),
+        expected_completion: isoDate(p.expectedCompletion),
+        status: PROJECT_STATUSES.includes(text(p.status)) ? text(p.status) : 'Active',
+        current_phase: text(p.currentPhase),
+        notes: text(p.notes),
+      };
+    },
+    fromRow: (r) => ({
+      id: text(r.id),
+      projectName: text(r.project_name),
+      location: text(r.location),
+      client: text(r.client),
+      contractValue: whole(r.contract_value),
+      totalReceived: whole(r.total_received),
+      startDate: text(r.start_date),
+      expectedCompletion: text(r.expected_completion),
+      status: text(r.status) || 'Active',
+      currentPhase: text(r.current_phase),
+      notes: text(r.notes),
+    }),
+  },
+];
+
+const byKey = new Map(TABLES.map((t) => [t.key, t]));
+const byTable = new Map(TABLES.map((t) => [t.table, t]));
+
+/* ---------- browser storage helpers ---------- */
+
+const QUEUE_KEY = 'fms-db-queue'; // records changed here and not yet saved
+const SAVE_DELAY = 1000;
+const RETRY_DELAY = 8000;
+const CHECK_EVERY = 60000;
+const PAGE = 1000;
+
+type Pending = { table: string; id: string };
+
+function readJSON<T>(key: string, fallback: T): T {
+  try { const raw = window.localStorage.getItem(key); return raw ? (JSON.parse(raw) as T) : fallback; } catch { return fallback; }
+}
+function parseList(raw: string | null): unknown[] {
+  try { const v: unknown = raw ? JSON.parse(raw) : []; return Array.isArray(v) ? v : []; } catch { return []; }
+}
+const readQueue = () => readJSON<Pending[]>(QUEUE_KEY, []);
+const writeQueue = (q: Pending[]) => { try { window.localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch { /* storage full */ } };
+const idOf = (item: unknown) => (isObj(item) && typeof item.id === 'string' ? item.id : '');
+
+/** id → record text, for spotting which records changed. */
+function index(list: unknown[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const item of list) { const id = idOf(item); if (id) m.set(id, JSON.stringify(item)); }
+  return m;
+}
+
+/* ---------- status shared with the top bar and Settings ---------- */
+
+export type SaveState = 'saved' | 'saving' | 'retrying' | 'readonly';
+type Status = { save: SaveState; message: string; newer: boolean };
+let status: Status = { save: 'saved', message: '', newer: false };
+const statusListeners = new Set<() => void>();
+function setStatus(next: Partial<Status>) { status = { ...status, ...next }; statusListeners.forEach((fn) => fn()); }
+const subscribeStatus = (fn: () => void) => { statusListeners.add(fn); return () => { statusListeners.delete(fn); }; };
+const useStatus = () => useSyncExternalStore(subscribeStatus, () => status);
+
+function friendly(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes('failed to fetch') || m.includes('network')) return 'No internet connection.';
+  if (m.includes('does not exist') || m.includes('could not find the table')) return 'A database table is missing. Run the latest Supabase script.';
+  if (m.includes('row-level security')) return 'Only an Admin can change records.';
+  return message;
+}
+
+/* ---------- reading the tables ---------- */
+
+async function fetchAll(table: string): Promise<Row[]> {
+  if (!supabase) return [];
+  const out: Row[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from(table).select('*')
+      .order('created_at', { ascending: true }).order('id', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as Row[];
+    out.push(...rows);
+    if (rows.length < PAGE) return out;
+  }
+}
+
+/** A short fingerprint of a table (row count and latest change), to notice newer data. */
+async function fingerprint(table: string): Promise<string | null> {
+  if (!supabase) return null;
+  const { data, count, error } = await supabase.from(table).select('updated_at', { count: 'exact' })
+    .order('updated_at', { ascending: false }).limit(1);
+  if (error) return null;
+  const latest = (data ?? []) as { updated_at?: string }[];
+  return `${count ?? 0}|${latest[0]?.updated_at ?? ''}`;
+}
+
+/* ---------- saving an Admin's changes ---------- */
+
+let applying = false; // true while this file itself writes to storage
+let syncing = false; // true for an Admin once the data is loaded
+const live = new Set<string>(); // tables whose records are kept in sync
+const seen = new Map<string, string>(); // table → fingerprint last seen
+let flushTimer: number | undefined;
+let flushing = false;
+
+function enqueue(items: Pending[]) {
+  if (!items.length) return;
+  const q = readQueue();
+  const has = new Set(q.map((p) => `${p.table}\u0000${p.id}`));
+  for (const p of items) if (!has.has(`${p.table}\u0000${p.id}`)) { q.push(p); has.add(`${p.table}\u0000${p.id}`); }
+  writeQueue(q);
+  setStatus({ save: 'saving', message: '' });
+  window.clearTimeout(flushTimer);
+  flushTimer = window.setTimeout(() => { void flush(); }, SAVE_DELAY);
+}
+
+async function flush(): Promise<void> {
+  if (!supabase || flushing) return;
+  flushing = true;
+  try {
+    for (;;) {
+      const batch = readQueue();
+      if (!batch.length) break;
+      // Taken off the queue before saving; anything changed meanwhile is queued again.
+      writeQueue([]);
+      try {
+        for (const table of new Set(batch.map((p) => p.table))) {
+          const spec = byTable.get(table);
+          if (!spec) continue;
+          const ids = new Set(batch.filter((p) => p.table === table).map((p) => p.id));
+          const current = new Map(parseList(window.localStorage.getItem(spec.key)).map((item) => [idOf(item), item]));
+          const rows: Row[] = [];
+          const gone: string[] = [];
+          ids.forEach((id) => {
+            const item = current.get(id);
+            if (item === undefined) { gone.push(id); return; }
+            const row = spec.toRow(item);
+            if (row) rows.push(row);
+          });
+          for (let i = 0; i < rows.length; i += 500) {
+            const { error } = await supabase.from(table).upsert(rows.slice(i, i + 500), { onConflict: 'id' });
+            if (error) throw new Error(error.message);
+          }
+          if (gone.length) {
+            const { error } = await supabase.from(table).delete().in('id', gone);
+            if (error) throw new Error(error.message);
+          }
+          const fp = await fingerprint(table);
+          if (fp) seen.set(table, fp);
+        }
+      } catch (e) {
+        // Put the batch back in front of anything queued meanwhile, and try again shortly.
+        writeQueue([...batch, ...readQueue()]);
+        const message = e instanceof Error ? friendly(e.message) : 'Unknown error.';
+        setStatus({ save: 'retrying', message: `Not saved to the database yet: ${message} Retrying…` });
+        window.clearTimeout(flushTimer);
+        flushTimer = window.setTimeout(() => { void flush(); }, RETRY_DELAY);
+        return;
+      }
+    }
+    setStatus({ save: 'saved', message: '' });
+  } finally {
+    flushing = false;
+  }
+}
+
+/** Save waiting changes now (used before reloading). True when nothing is left to save. */
+export async function saveNow(): Promise<boolean> {
+  window.clearTimeout(flushTimer);
+  if (syncing) await flush();
+  return readQueue().length === 0;
+}
+
+/** Notice what each page writes to storage, without changing the pages. */
+let watching = false;
+function watchStorage() {
+  if (watching) return;
+  watching = true;
+  const proto = Storage.prototype;
+  const setItem = proto.setItem;
+  const removeItem = proto.removeItem;
+  const track = (store: Storage, key: string, before: string | null, after: string | null) => {
+    if (applying || !syncing || store !== window.localStorage || before === after) return;
+    const spec = byKey.get(key);
+    if (!spec || !live.has(spec.table)) return;
+    const was = index(parseList(before));
+    const now = index(parseList(after));
+    const changed: Pending[] = [];
+    now.forEach((json, id) => { if (was.get(id) !== json) changed.push({ table: spec.table, id }); });
+    was.forEach((_json, id) => { if (!now.has(id)) changed.push({ table: spec.table, id }); });
+    enqueue(changed);
+  };
+  proto.setItem = function (this: Storage, key: string, value: string) {
+    const before = byKey.has(key) ? this.getItem(key) : null;
+    setItem.call(this, key, value);
+    if (byKey.has(key)) track(this, key, before, value);
+  };
+  proto.removeItem = function (this: Storage, key: string) {
+    const before = byKey.has(key) ? this.getItem(key) : null;
+    removeItem.call(this, key);
+    if (byKey.has(key)) track(this, key, before, null);
+  };
+}
+
+/* ---------- the gate around the app ---------- */
+
+export type SectionState = { table: string; label: string; inDatabase: boolean; onThisComputer: number };
+type Db = { ready: boolean; sections: SectionState[]; moveToDatabase: (table: string) => Promise<string | null> };
+const DbContext = createContext<Db>({ ready: false, sections: [], moveToDatabase: async () => null });
+export const useDatabase = () => useContext(DbContext);
+
+/**
+ * Loads the records from the database before showing the app.
+ * Sits inside AccessProvider, so it knows whether this person is an Admin.
+ */
+export function DatabaseGate({ children }: { children: ReactNode }) {
+  const access = useAccess();
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [sections, setSections] = useState<SectionState[]>([]);
+
+  useEffect(() => {
+    if (access.loading) return;
+    let alive = true;
+    (async () => {
+      setReady(false); setError('');
+      syncing = false;
+      live.clear();
+      if (!supabase) { setReady(true); return; }
+      try {
+        // An Admin's unsaved changes from last time are saved before anything is loaded.
+        if (access.isAdmin && readQueue().length) {
+          syncing = true;
+          TABLES.forEach((t) => live.add(t.table));
+          await flush();
+          syncing = false;
+          live.clear();
+          if (readQueue().length) throw new Error('Some changes made on this computer are not saved to the database yet. Check the internet connection and try again.');
+        }
+        const states: SectionState[] = [];
+        for (const spec of TABLES) {
+          const rows = await fetchAll(spec.table);
+          const local = parseList(window.localStorage.getItem(spec.key));
+          if (!rows.length && local.length && access.isAdmin) {
+            // Not moved yet: keep using this computer's records until the Admin moves them.
+            states.push({ table: spec.table, label: spec.label, inDatabase: false, onThisComputer: local.length });
+            continue;
+          }
+          applying = true;
+          try { window.localStorage.setItem(spec.key, JSON.stringify(rows.map(spec.fromRow))); } finally { applying = false; }
+          live.add(spec.table);
+          const fp = await fingerprint(spec.table);
+          if (fp) seen.set(spec.table, fp);
+          states.push({ table: spec.table, label: spec.label, inDatabase: true, onThisComputer: rows.length });
+        }
+        if (!alive) return;
+        watchStorage();
+        syncing = access.isAdmin;
+        setStatus({ save: access.isAdmin ? 'saved' : 'readonly', message: '', newer: false });
+        setSections(states);
+        setReady(true);
+      } catch (e) {
+        if (!alive) return;
+        setError(e instanceof Error ? friendly(e.message) : 'The records could not be loaded.');
+      }
+    })();
+    return () => { alive = false; };
+  }, [access.loading, access.isAdmin, attempt]);
+
+  // Warn before closing the tab while changes are still being saved.
+  useEffect(() => {
+    const onLeave = (event: BeforeUnloadEvent) => {
+      if (syncing && readQueue().length) { event.preventDefault(); event.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', onLeave);
+    return () => window.removeEventListener('beforeunload', onLeave);
+  }, []);
+
+  // When the app comes back into view, check whether someone saved newer records.
+  useEffect(() => {
+    if (!ready) return;
+    let last = Date.now();
+    const check = async () => {
+      if (document.visibilityState !== 'visible' || Date.now() - last < CHECK_EVERY || readQueue().length) return;
+      last = Date.now();
+      for (const table of live) {
+        const fp = await fingerprint(table);
+        if (fp && seen.get(table) !== fp) { setStatus({ newer: true }); return; }
+      }
+    };
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('focus', check);
+    return () => { document.removeEventListener('visibilitychange', check); window.removeEventListener('focus', check); };
+  }, [ready]);
+
+  /** One-time move of this computer's records into an empty table. Returns an error message, or null (and reloads). */
+  const moveToDatabase = useCallback(async (table: string): Promise<string | null> => {
+    const spec = byTable.get(table);
+    if (!supabase || !spec) return 'The database is not set up.';
+    const { count, error: countError } = await supabase.from(table).select('id', { count: 'exact', head: true });
+    if (countError) return friendly(countError.message);
+    if ((count ?? 0) > 0) return `${spec.label} are already in the database. Reload the page to use them.`;
+    const rows = parseList(window.localStorage.getItem(spec.key)).map(spec.toRow).filter((r): r is Row => r !== null);
+    if (!rows.length) return 'There is nothing on this computer to move.';
+    for (let i = 0; i < rows.length; i += 500) {
+      const { error } = await supabase.from(table).insert(rows.slice(i, i + 500));
+      if (error) return friendly(error.message);
+    }
+    window.location.reload();
+    return null;
+  }, []);
+
+  if (error) {
+    return (
+      <div className="auth-gate">
+        <div className="auth-gate-card" role="alert">
+          <h1>Couldn't load the records</h1>
+          <p>{error}</p>
+          <button type="button" style={btn} onClick={() => setAttempt((n) => n + 1)}>Try again</button>
+        </div>
+      </div>
+    );
+  }
+  if (!ready) return <div className="auth-gate" aria-busy="true" aria-label="Loading records"><div className="auth-spinner" /></div>;
+  return <DbContext.Provider value={{ ready, sections, moveToDatabase }}>{children}</DbContext.Provider>;
+}
+
+const btn = { height: 40, padding: '0 16px', border: 0, borderRadius: 12, background: '#d5f56b', color: '#1d2b12', font: 'inherit', fontSize: 14, fontWeight: 600, cursor: 'pointer' } as const;
+
+/* ---------- status shown in the top bar ---------- */
+
+const STATUS_CSS = `
+.db-pill{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 11px;border-radius:999px;font-size:12.5px;font-weight:600;white-space:nowrap;border:1px solid transparent;background:none;font-family:inherit}
+.db-pill.ok{background:#e7f6ee;color:#1f6b46}
+.db-pill.busy{background:#eef3f0;color:#3b4a42}
+.db-pill.warn{background:#fdf0dc;color:#8a5516;border-color:#f3d9b0}
+.db-pill.view{background:#e6effc;color:#2f5a9c}
+.db-pill.local{background:#f1f5f3;color:#5f6e66}
+button.db-pill{cursor:pointer}
+button.db-pill:hover{filter:brightness(.97)}
+.db-spin{animation:db-spin 1s linear infinite}
+@keyframes db-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.db-spin{animation:none}}
+@media(max-width:760px){.db-pill .db-text{display:none}.db-pill{width:32px;padding:0;justify-content:center}}
+`;
+
+export function DatabaseStatus() {
+  const { sections } = useDatabase();
+  const s = useStatus();
+  const notMoved = sections.filter((x) => !x.inDatabase);
+
+  let pill: ReactNode;
+  if (s.newer) {
+    pill = <button type="button" className="db-pill warn" title="Newer records were saved. Reload to see them." onClick={() => window.location.reload()}><RefreshCw size={15} /><span className="db-text">New data · Reload</span></button>;
+  } else if (s.save === 'retrying') {
+    pill = <span className="db-pill warn" title={s.message} role="status"><TriangleAlert size={15} /><span className="db-text">Not saved yet</span></span>;
+  } else if (s.save === 'saving') {
+    pill = <span className="db-pill busy" role="status"><Loader2 size={15} className="db-spin" /><span className="db-text">Saving…</span></span>;
+  } else if (s.save === 'readonly') {
+    pill = <span className="db-pill view" title="You can view the records but not change them."><Eye size={15} /><span className="db-text">View only</span></span>;
+  } else if (notMoved.length) {
+    pill = <span className="db-pill local" title={`${notMoved.map((x) => x.label).join(', ')}: still only on this computer. Move them from Settings.`}><HardDrive size={15} /><span className="db-text">Not in database yet</span></span>;
+  } else {
+    pill = <span className="db-pill ok" title="All changes are saved to the database."><Database size={15} /><span className="db-text">Saved</span></span>;
+  }
+  return <><style>{STATUS_CSS}</style>{pill}</>;
+}
