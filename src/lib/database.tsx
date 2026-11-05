@@ -177,6 +177,78 @@ export const TABLES: TableSpec[] = [
     },
     fromRow: (r) => ({ id: text(r.id), activity: text(r.activity) }),
   },
+  {
+    // Client invoices: one row per invoice. Its payments are in the next table.
+    table: 'client_invoices',
+    key: 'ista-fortis-invoices-v1',
+    label: 'Client invoices',
+    toRow: (i) => {
+      if (!isObj(i) || typeof i.id !== 'string' || !i.id) return null;
+      return {
+        id: i.id,
+        invoice_number: text(i.invoiceNumber),
+        project_id: text(i.projectId),
+        project_name: text(i.projectName),
+        client: text(i.client),
+        description: text(i.description),
+        issue_date: isoDate(i.issueDate),
+        due_date: isoDate(i.dueDate),
+        amount: amount(i.amount),
+        notes: text(i.notes),
+        voided: i.voided === true,
+        recorded_at: stamp(i.createdAt) ?? new Date().toISOString(),
+      };
+    },
+    fromRow: (r) => ({
+      id: text(r.id),
+      invoiceNumber: text(r.invoice_number),
+      projectId: text(r.project_id),
+      projectName: text(r.project_name),
+      client: text(r.client),
+      description: text(r.description),
+      issueDate: text(r.issue_date),
+      dueDate: text(r.due_date),
+      amount: amount(r.amount),
+      payments: [],
+      notes: text(r.notes),
+      voided: r.voided === true,
+      createdAt: isoStamp(r.recorded_at),
+    }),
+    // The page lists the newest invoice first.
+    put: (_stored, items) => [...items].sort((a, b) => text(isObj(b) ? b.createdAt : '').localeCompare(text(isObj(a) ? a.createdAt : ''))),
+  },
+  {
+    // Client invoice payments: one row per payment received against an invoice.
+    table: 'client_invoice_payments',
+    key: 'ista-fortis-invoices-v1',
+    label: 'Client invoice payments',
+    pick: (stored) => (Array.isArray(stored) ? stored : []).filter(isObj).flatMap((inv) =>
+      (Array.isArray(inv.payments) ? inv.payments : []).filter(isObj).map((p) => ({ id: `${text(inv.id)}:${text(p.id)}`, invoiceId: text(inv.id), payment: p }))),
+    put: (stored, items) => {
+      const byInvoice = new Map<string, unknown[]>();
+      items.filter(isObj).forEach((i) => byInvoice.set(text(i.invoiceId), [...(byInvoice.get(text(i.invoiceId)) ?? []), i.payment]));
+      return (Array.isArray(stored) ? stored : []).map((inv) => (isObj(inv) ? { ...inv, payments: byInvoice.get(text(inv.id)) ?? [] } : inv));
+    },
+    toRow: (i) => {
+      if (!isObj(i) || !isObj(i.payment) || typeof i.id !== 'string') return null;
+      const p = i.payment;
+      return {
+        id: i.id,
+        invoice_id: text(i.invoiceId),
+        payment_id: text(p.id),
+        amount: amount(p.amount),
+        payment_date: isoDate(p.date),
+        method: text(p.method),
+        reference: text(p.reference),
+        notes: text(p.notes),
+      };
+    },
+    fromRow: (r) => ({
+      id: text(r.id),
+      invoiceId: text(r.invoice_id),
+      payment: { id: text(r.payment_id), amount: amount(r.amount), date: text(r.payment_date), method: text(r.method), reference: text(r.reference), notes: text(r.notes) },
+    }),
+  },
 ];
 
 const byKey = new Map<string, TableSpec[]>();
