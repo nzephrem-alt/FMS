@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { ACC } from '../lib/accounts';
 import { ledger, type JournalEntry, type JournalLineInput } from '../lib/ledger';
+import { useAccess } from '../lib/access';
 
 const STORAGE_KEY = 'ista-fortis-expenses-v1';
 
@@ -246,6 +247,7 @@ const EXPENSES_CSS = `
 `;
 
 export default function Expenses() {
+  const { isAdmin } = useAccess(); // Viewers see expenses and payments but no buttons that change them
   const [expenses, setExpenses] = useState<Expense[]>(readExpenses);
   const [entries, setEntries] = useState<readonly JournalEntry[]>(() =>
     ledger.getEntries()
@@ -582,7 +584,7 @@ export default function Expenses() {
           <p>Manage operating expenses, payments and outstanding obligations.</p>
         </div>
 
-        <div className="projects-header-actions">
+        {isAdmin && <div className="projects-header-actions">
           <button
             type="button"
             className="primary-button"
@@ -594,7 +596,7 @@ export default function Expenses() {
           >
             <Plus size={16} /> Record expense
           </button>
-        </div>
+        </div>}
       </div>
 
       {success && (
@@ -702,9 +704,9 @@ export default function Expenses() {
             <p>
               {expenses.length
                 ? 'Try another search term or filter.'
-                : 'Record your first operating expense to start tracking payments and payables.'}
+                : isAdmin ? 'Record your first operating expense to start tracking payments and payables.' : 'Expenses will appear here once the Admin records them.'}
             </p>
-            {!expenses.length && (
+            {!expenses.length && isAdmin && (
               <div
                 className="projects-header-actions"
                 style={{ justifyContent: 'center' }}
@@ -783,7 +785,7 @@ export default function Expenses() {
                             <Eye size={15} />
                           </button>
 
-                          {balance(expense) > 0 && (
+                          {isAdmin && balance(expense) > 0 && (
                             <button
                               type="button"
                               onClick={() => openPayment(expense)}
@@ -812,7 +814,7 @@ export default function Expenses() {
         with expense transactions.
       </div>
 
-      {showForm && (
+      {showForm && isAdmin && (
         <Modal
           eyebrow="NEW EXPENSE"
           title="Record new expense"
@@ -968,7 +970,7 @@ export default function Expenses() {
         </Modal>
       )}
 
-      {paymentExpense && (
+      {paymentExpense && isAdmin && (
         <Modal
           eyebrow={`${paymentExpense.expenseNumber} · ${paymentExpense.description}`}
           title="Record expense payment"
@@ -1145,7 +1147,7 @@ export default function Expenses() {
           )}
 
           <div className="projects-form-actions">
-            {balance(selectedExpense) > 0 && (
+            {isAdmin && balance(selectedExpense) > 0 && (
               <button
                 type="button"
                 className="primary-button"
