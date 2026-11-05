@@ -17,6 +17,7 @@ import Expenses from "./pages/Expenses";
 import Transactions from "./pages/Transactions";
 import Accounting from "./pages/Accounting";
 import FinancialReports from "./pages/FinancialReports";
+import Settings from "./pages/Settings";
 
 type Page =
   | "Dashboard"
@@ -142,6 +143,9 @@ case "Transactions":
 
         case "Financial Reports":
         return <FinancialReports />;
+
+      case "Settings":
+        return <Settings />;
 
       default:
         return (
