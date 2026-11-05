@@ -4,6 +4,7 @@ import type { Session } from "@supabase/supabase-js";
 
 import { supabase, supabaseConfigured } from "./lib/supabase";
 import AuthPage from "./pages/AuthPage";
+import { AccessProvider } from "./lib/access";
 
 import Sidebar from "./components/Sidebar";
 import Dashboard from "./pages/Dashboard";
@@ -95,7 +96,9 @@ function App() {
   return (
     <>
       <style>{APP_AUTH_CSS}</style>
-      <Workspace email={session.user.email ?? ""} onSignOut={() => { void supabase?.auth.signOut(); }} />
+      <AccessProvider userId={session.user.id} email={session.user.email ?? ""}>
+        <Workspace email={session.user.email ?? ""} onSignOut={() => { void supabase?.auth.signOut(); }} />
+      </AccessProvider>
     </>
   );
 }
