@@ -252,20 +252,6 @@ function Sidebar({
         </nav>
 
         <div className="sidebar-bottom">
-          <button
-            className={`nav-item ${
-              active === 'Settings' ? 'active' : ''
-            }`}
-            aria-current={active === 'Settings' ? 'page' : undefined}
-            onClick={() => {
-              onNavigate('Settings');
-              setMobileOpen(false);
-            }}
-          >
-            <Settings size={18} />
-            <span>Settings</span>
-          </button>
-
           <div className="help-card">
             <div className="help-icon">
               <HardHat size={18} />
