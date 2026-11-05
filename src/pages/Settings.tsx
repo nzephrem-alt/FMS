@@ -397,10 +397,12 @@ export default function Settings() {
             <div className="st-box">
               <h4>Restore from a backup</h4>
               <p>Replaces the data on this browser with the data in a backup file.</p>
-              <div className="st-actions">
-                <label className="st-btn" htmlFor="st-restore-file"><Upload size={16} /> Choose backup file</label>
-                <input id="st-restore-file" className="st-file" type="file" accept=".json,application/json" onChange={(e) => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
-              </div>
+              {inDb.length
+                ? <p>Turned off now that records are kept in the database. Correct records on their own pages instead.</p>
+                : <div className="st-actions">
+                    <label className="st-btn" htmlFor="st-restore-file"><Upload size={16} /> Choose backup file</label>
+                    <input id="st-restore-file" className="st-file" type="file" accept=".json,application/json" onChange={(e) => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
+                  </div>}
             </div>
           </div>
 
