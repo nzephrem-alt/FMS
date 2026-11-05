@@ -23,6 +23,10 @@ type TableSpec = {
   toRow: (item: unknown) => Row | null;
   /** Table row → app record, with the same fields the pages expect. */
   fromRow: (row: Row) => unknown;
+  /** When the stored value is not a plain list: the records for this table inside it. */
+  pick?: (stored: unknown) => unknown[];
+  /** …and how to put them back. Tables sharing a key are loaded, moved and shown together. */
+  put?: (stored: unknown, items: unknown[]) => unknown;
 };
 
 /* ---------- field helpers ---------- */
@@ -120,9 +124,63 @@ export const TABLES: TableSpec[] = [
       createdAt: isoStamp(r.recorded_at),
     }),
   },
+  {
+    // Site labour: one row per worker per day.
+    table: 'site_labour',
+    key: 'ista-fortis-site-labour-v1',
+    label: 'Site labour worker-days',
+    pick: (stored) => (isObj(stored) && Array.isArray(stored.entries) ? stored.entries : []),
+    put: (stored, items) => ({ entries: items, activities: isObj(stored) && isObj(stored.activities) ? stored.activities : {} }),
+    toRow: (e) => {
+      if (!isObj(e) || typeof e.id !== 'string' || !e.id) return null;
+      const paid = isObj(e.paid) ? e.paid : null;
+      return {
+        id: e.id,
+        project_id: text(e.projectId),
+        work_date: isoDate(e.date),
+        worker: text(e.worker),
+        category: text(e.category),
+        rate: amount(e.rate),
+        paid_payment_id: paid ? text(paid.paymentId) || null : null,
+        paid_method: paid ? text(paid.method) || null : null,
+        paid_date: paid ? isoDate(paid.date) : null,
+        recorded_at: stamp(e.createdAt) ?? new Date().toISOString(),
+      };
+    },
+    fromRow: (r) => ({
+      id: text(r.id),
+      projectId: text(r.project_id),
+      date: text(r.work_date),
+      worker: text(r.worker),
+      category: text(r.category),
+      rate: amount(r.rate),
+      ...(r.paid_payment_id ? { paid: { paymentId: text(r.paid_payment_id), method: text(r.paid_method), date: text(r.paid_date) } } : {}),
+      createdAt: isoStamp(r.recorded_at),
+    }),
+  },
+  {
+    // Site labour: what was done on site each day, per project (the day's activity note).
+    table: 'site_labour_activities',
+    key: 'ista-fortis-site-labour-v1',
+    label: 'Site labour activities',
+    pick: (stored) => (isObj(stored) && isObj(stored.activities)
+      ? Object.entries(stored.activities).map(([id, activity]) => ({ id, activity: text(activity) }))
+      : []),
+    put: (stored, items) => ({
+      entries: isObj(stored) && Array.isArray(stored.entries) ? stored.entries : [],
+      activities: Object.fromEntries(items.filter(isObj).map((i) => [text(i.id), text(i.activity)])),
+    }),
+    toRow: (a) => {
+      if (!isObj(a) || typeof a.id !== 'string' || !a.id) return null;
+      const cut = a.id.lastIndexOf('|'); // id is "<project id>|<date>"
+      return { id: a.id, project_id: a.id.slice(0, cut), work_date: isoDate(a.id.slice(cut + 1)), activity: text(a.activity) };
+    },
+    fromRow: (r) => ({ id: text(r.id), activity: text(r.activity) }),
+  },
 ];
 
-const byKey = new Map(TABLES.map((t) => [t.key, t]));
+const byKey = new Map<string, TableSpec[]>();
+TABLES.forEach((t) => byKey.set(t.key, [...(byKey.get(t.key) ?? []), t]));
 const byTable = new Map(TABLES.map((t) => [t.table, t]));
 
 /* ---------- browser storage helpers ---------- */
@@ -138,8 +196,14 @@ type Pending = { table: string; id: string };
 function readJSON<T>(key: string, fallback: T): T {
   try { const raw = window.localStorage.getItem(key); return raw ? (JSON.parse(raw) as T) : fallback; } catch { return fallback; }
 }
-function parseList(raw: string | null): unknown[] {
-  try { const v: unknown = raw ? JSON.parse(raw) : []; return Array.isArray(v) ? v : []; } catch { return []; }
+function parseStored(raw: string | null): unknown {
+  try { return raw ? (JSON.parse(raw) as unknown) : null; } catch { return null; }
+}
+/** The records for one table in a stored value. */
+function itemsOf(spec: TableSpec, raw: string | null): unknown[] {
+  const v = parseStored(raw);
+  if (spec.pick) return spec.pick(v);
+  return Array.isArray(v) ? v : [];
 }
 const readQueue = () => readJSON<Pending[]>(QUEUE_KEY, []);
 const writeQueue = (q: Pending[]) => { try { window.localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch { /* storage full */ } };
@@ -230,7 +294,7 @@ async function flush(): Promise<void> {
           const spec = byTable.get(table);
           if (!spec) continue;
           const ids = new Set(batch.filter((p) => p.table === table).map((p) => p.id));
-          const current = new Map(parseList(window.localStorage.getItem(spec.key)).map((item) => [idOf(item), item]));
+          const current = new Map(itemsOf(spec, window.localStorage.getItem(spec.key)).map((item) => [idOf(item), item]));
           const rows: Row[] = [];
           const gone: string[] = [];
           ids.forEach((id) => {
@@ -283,13 +347,14 @@ function watchStorage() {
   const removeItem = proto.removeItem;
   const track = (store: Storage, key: string, before: string | null, after: string | null) => {
     if (applying || !syncing || store !== window.localStorage || before === after) return;
-    const spec = byKey.get(key);
-    if (!spec || !live.has(spec.table)) return;
-    const was = index(parseList(before));
-    const now = index(parseList(after));
     const changed: Pending[] = [];
-    now.forEach((json, id) => { if (was.get(id) !== json) changed.push({ table: spec.table, id }); });
-    was.forEach((_json, id) => { if (!now.has(id)) changed.push({ table: spec.table, id }); });
+    for (const spec of byKey.get(key) ?? []) {
+      if (!live.has(spec.table)) continue;
+      const was = index(itemsOf(spec, before));
+      const now = index(itemsOf(spec, after));
+      now.forEach((json, id) => { if (was.get(id) !== json) changed.push({ table: spec.table, id }); });
+      was.forEach((_json, id) => { if (!now.has(id)) changed.push({ table: spec.table, id }); });
+    }
     enqueue(changed);
   };
   proto.setItem = function (this: Storage, key: string, value: string) {
@@ -341,20 +406,29 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
           if (readQueue().length) throw new Error('Some changes made on this computer are not saved to the database yet. Check the internet connection and try again.');
         }
         const states: SectionState[] = [];
-        for (const spec of TABLES) {
-          const rows = await fetchAll(spec.table);
-          const local = parseList(window.localStorage.getItem(spec.key));
-          if (!rows.length && local.length && access.isAdmin) {
+        for (const [key, specs] of byKey) {
+          const main = specs[0];
+          const raw = window.localStorage.getItem(key);
+          const loaded = await Promise.all(specs.map((spec) => fetchAll(spec.table)));
+          const localCount = itemsOf(main, raw).length;
+          if (access.isAdmin && !loaded[0].length && localCount) {
             // Not moved yet: keep using this computer's records until the Admin moves them.
-            states.push({ table: spec.table, label: spec.label, inDatabase: false, onThisComputer: local.length });
+            states.push({ table: main.table, label: main.label, inDatabase: false, onThisComputer: localCount });
             continue;
           }
+          let stored: unknown = parseStored(raw);
+          specs.forEach((spec, i) => {
+            const items = loaded[i].map(spec.fromRow);
+            stored = spec.put ? spec.put(stored, items) : items;
+          });
           applying = true;
-          try { window.localStorage.setItem(spec.key, JSON.stringify(rows.map(spec.fromRow))); } finally { applying = false; }
-          live.add(spec.table);
-          const fp = await fingerprint(spec.table);
-          if (fp) seen.set(spec.table, fp);
-          states.push({ table: spec.table, label: spec.label, inDatabase: true, onThisComputer: rows.length });
+          try { window.localStorage.setItem(key, JSON.stringify(stored)); } finally { applying = false; }
+          for (const spec of specs) {
+            live.add(spec.table);
+            const fp = await fingerprint(spec.table);
+            if (fp) seen.set(spec.table, fp);
+          }
+          states.push({ table: main.table, label: main.label, inDatabase: true, onThisComputer: loaded[0].length });
         }
         if (!alive) return;
         watchStorage();
@@ -398,16 +472,22 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
 
   /** One-time move of this computer's records into an empty table. Returns an error message, or null (and reloads). */
   const moveToDatabase = useCallback(async (table: string): Promise<string | null> => {
-    const spec = byTable.get(table);
-    if (!supabase || !spec) return 'The database is not set up.';
-    const { count, error: countError } = await supabase.from(table).select('id', { count: 'exact', head: true });
+    const main = byTable.get(table);
+    if (!supabase || !main) return 'The database is not set up.';
+    const client = supabase;
+    const specs = byKey.get(main.key) ?? [main]; // tables sharing one storage key move together
+    const { count, error: countError } = await client.from(main.table).select('id', { count: 'exact', head: true });
     if (countError) return friendly(countError.message);
-    if ((count ?? 0) > 0) return `${spec.label} are already in the database. Reload the page to use them.`;
-    const rows = parseList(window.localStorage.getItem(spec.key)).map(spec.toRow).filter((r): r is Row => r !== null);
-    if (!rows.length) return 'There is nothing on this computer to move.';
-    for (let i = 0; i < rows.length; i += 500) {
-      const { error } = await supabase.from(table).insert(rows.slice(i, i + 500));
-      if (error) return friendly(error.message);
+    if ((count ?? 0) > 0) return `${main.label} are already in the database. Reload the page to use them.`;
+    const raw = window.localStorage.getItem(main.key);
+    if (!itemsOf(main, raw).length) return 'There is nothing on this computer to move.';
+    // The main records go last, so an interrupted move simply shows the move button again.
+    for (const spec of [...specs.slice(1), main]) {
+      const rows = itemsOf(spec, raw).map(spec.toRow).filter((r): r is Row => r !== null);
+      for (let i = 0; i < rows.length; i += 500) {
+        const { error } = await client.from(spec.table).upsert(rows.slice(i, i + 500), { onConflict: 'id' });
+        if (error) return friendly(error.message);
+      }
     }
     window.location.reload();
     return null;
