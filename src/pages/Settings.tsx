@@ -373,9 +373,8 @@ export default function Settings() {
               {moveConfirm !== x.table
                 ? <div className="st-actions"><button type="button" className="st-btn primary" onClick={() => setMoveConfirm(x.table)}><DatabaseZap size={16} /> Move {x.label.toLowerCase()}</button></div>
                 : <>
-                    <p className="st-msg warn"><AlertTriangle size={16} /><span>Download a backup first, and make sure this is the browser with your latest records.</span></p>
+                    <p className="st-msg warn"><AlertTriangle size={16} /><span>Make sure this is the browser with your latest records.</span></p>
                     <div className="st-actions">
-                      <button type="button" className="st-btn" onClick={backupNow}><Download size={16} /> Download backup</button>
                       <button type="button" className="st-btn" onClick={() => setMoveConfirm('')} disabled={!!moving}><X size={16} /> Cancel</button>
                       <button type="button" className="st-btn primary" onClick={() => { void moveSection(x.table); }} disabled={!!moving}><DatabaseZap size={16} /> {moving === x.table ? 'Moving…' : `Move ${x.onThisComputer.toLocaleString('en-RW')} ${x.label.toLowerCase()}`}</button>
                     </div>
