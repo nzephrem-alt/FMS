@@ -5,6 +5,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 import AuthPage from "./pages/AuthPage";
 import { AccessProvider } from "./lib/access";
+import { DatabaseGate, DatabaseStatus } from "./lib/database";
 
 import Sidebar from "./components/Sidebar";
 import Dashboard from "./pages/Dashboard";
@@ -97,7 +98,9 @@ function App() {
     <>
       <style>{APP_AUTH_CSS}</style>
       <AccessProvider userId={session.user.id} email={session.user.email ?? ""}>
-        <Workspace email={session.user.email ?? ""} onSignOut={() => { void supabase?.auth.signOut(); }} />
+        <DatabaseGate>
+          <Workspace email={session.user.email ?? ""} onSignOut={() => { void supabase?.auth.signOut(); }} />
+        </DatabaseGate>
       </AccessProvider>
     </>
   );
@@ -193,6 +196,7 @@ case "Transactions":
           </div>
 
           <div className="topbar-right">
+            <DatabaseStatus />
             <div className="top-user" title={email}>
               <div className="avatar small">{(email.slice(0, 2) || "MD").toUpperCase()}</div>
               <span>{email || "Signed in"}</span>
