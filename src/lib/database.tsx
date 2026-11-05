@@ -380,6 +380,86 @@ export const TABLES: TableSpec[] = [
       ...(r.method == null ? {} : { method: text(r.method) }),
       paidAt: isoStamp(r.paid_at),
     }),
+  },  {
+    // The ledger: one row per journal entry. Posted entries are never changed; mistakes are reversed.
+    table: 'journal_entries',
+    key: 'ista-fortis-ledger-v1',
+    label: 'Ledger entries',
+    toRow: (e) => {
+      if (!isObj(e) || typeof e.id !== 'string' || !e.id) return null;
+      return {
+        id: e.id,
+        entry_date: isoDate(e.date),
+        description: text(e.description),
+        source_type: text(e.sourceType),
+        source_id: text(e.sourceId),
+        idempotency_key: e.idempotencyKey ? text(e.idempotencyKey) : null,
+        reference: e.reference ? text(e.reference) : null,
+        reversal_of: e.reversalOf ? text(e.reversalOf) : null,
+        posted_at: stamp(e.createdAt) ?? new Date().toISOString(),
+        posted_by: text(e.createdBy),
+      };
+    },
+    fromRow: (r) => ({
+      id: text(r.id),
+      date: text(r.entry_date),
+      description: text(r.description),
+      sourceType: text(r.source_type),
+      sourceId: text(r.source_id),
+      ...(r.idempotency_key ? { idempotencyKey: text(r.idempotency_key) } : {}),
+      ...(r.reference ? { reference: text(r.reference) } : {}),
+      ...(r.reversal_of ? { reversalOf: text(r.reversal_of) } : {}),
+      lines: [],
+      createdAt: isoStamp(r.posted_at),
+      createdBy: text(r.posted_by),
+    }),
+    // Entries stay in the order they were posted (JE-000001, JE-000002, …).
+    put: (_stored, items) => [...items].sort((a, b) => text(isObj(a) ? a.id : '').localeCompare(text(isObj(b) ? b.id : ''))),
+  },
+  {
+    // The ledger: one row per debit or credit line of a journal entry, in their original order.
+    table: 'journal_lines',
+    key: 'ista-fortis-ledger-v1',
+    label: 'Ledger lines',
+    pick: (stored) => (Array.isArray(stored) ? stored : []).filter(isObj).flatMap((entry) =>
+      (Array.isArray(entry.lines) ? entry.lines : []).filter(isObj).map((line, position) => ({ id: `${text(entry.id)}:${position}`, entryId: text(entry.id), position, line }))),
+    put: (stored, items) => {
+      const byEntry = new Map<string, Row[]>();
+      items.filter(isObj).forEach((i) => byEntry.set(text(i.entryId), [...(byEntry.get(text(i.entryId)) ?? []), i]));
+      return (Array.isArray(stored) ? stored : []).map((entry) => {
+        if (!isObj(entry)) return entry;
+        const list = [...(byEntry.get(text(entry.id)) ?? [])].sort((a, b) => whole(a.position) - whole(b.position));
+        return { ...entry, lines: list.map((i) => i.line) };
+      });
+    },
+    toRow: (i) => {
+      if (!isObj(i) || !isObj(i.line) || typeof i.id !== 'string') return null;
+      const l = i.line;
+      return {
+        id: i.id,
+        entry_id: text(i.entryId),
+        line_no: whole(i.position),
+        account: text(l.account),
+        debit: amount(l.debit),
+        credit: amount(l.credit),
+        project_id: l.projectId ? text(l.projectId) : null,
+        party: l.party ? text(l.party) : null,
+        memo: l.memo ? text(l.memo) : null,
+      };
+    },
+    fromRow: (r) => ({
+      id: text(r.id),
+      entryId: text(r.entry_id),
+      position: whole(r.line_no),
+      line: {
+        account: text(r.account),
+        debit: amount(r.debit),
+        credit: amount(r.credit),
+        ...(r.project_id ? { projectId: text(r.project_id) } : {}),
+        ...(r.party ? { party: text(r.party) } : {}),
+        ...(r.memo ? { memo: text(r.memo) } : {}),
+      },
+    }),
   },
 ];
 
