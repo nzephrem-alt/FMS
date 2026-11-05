@@ -4,6 +4,7 @@ import {
   UserRound, KeyRound, LogOut, Download, Upload, Database, ShieldCheck, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff,
 } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
+import { roleLabel, useAccess } from '../lib/access';
 
 /* ---------- what this browser stores ---------- */
 
@@ -165,6 +166,7 @@ const SETTINGS_CSS = `
 /* ---------- page ---------- */
 
 export default function Settings() {
+  const access = useAccess();
   const [email, setEmail] = useState('');
   const [lastSignIn, setLastSignIn] = useState('');
   const [password, setPassword] = useState('');
@@ -274,7 +276,11 @@ export default function Settings() {
           <Head icon={<UserRound size={19} />} tone="green" id="st-account" title="Account" sub="Who is signed in" />
           {supabaseConfigured ? (
             <>
-              <div className="st-row"><span>Email</span><strong>{email || '—'}</strong></div>
+              <div className="st-row"><span>Name</span><strong>{access.name}</strong></div>
+              <div className="st-row"><span>Title</span><strong>{access.title || '—'}</strong></div>
+              <div className="st-row"><span>Role</span><strong>{access.loading ? '…' : roleLabel(access.role)}</strong></div>
+              <div className="st-row"><span>Email</span><strong>{email || access.email || '—'}</strong></div>
+              {access.problem && <p className="st-msg warn"><AlertTriangle size={16} /><span>Your profile could not be loaded, so you have view-only access. If you are the Admin, run the roles script in Supabase.</span></p>}
               <div className="st-row"><span>Last sign-in</span><strong>{when(lastSignIn || undefined)}</strong></div>
               <div className="st-actions">
                 <button type="button" className="st-btn" onClick={() => void signOut(false)} disabled={signingOut}><LogOut size={16} /> Sign out</button>
