@@ -32,6 +32,12 @@ const text = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : Strin
 const whole = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n) : 0; };
 const isoDate = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
 const PROJECT_STATUSES = ['Active', 'Completed', 'On hold', 'Cancelled'];
+const COST_CATEGORIES = ['Labour', 'Materials', 'Equipment', 'Transport', 'Site expenses', 'Other'];
+const amount = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
+/** A date and time the database accepts, or null. */
+const stamp = (v: unknown) => (typeof v === 'string' && v && !Number.isNaN(Date.parse(v)) ? v : null);
+/** Database date and time → the same ISO text the app writes (2026-11-05T07:00:00.000Z). */
+const isoStamp = (v: unknown) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : '');
 
 /* ---------- the sections kept in the database ---------- */
 
@@ -68,6 +74,50 @@ export const TABLES: TableSpec[] = [
       status: text(r.status) || 'Active',
       currentPhase: text(r.current_phase),
       notes: text(r.notes),
+    }),
+  },
+  {
+    table: 'project_costs',
+    key: 'ista-fortis-project-costs-v1',
+    label: 'Project costs',
+    toRow: (c) => {
+      if (!isObj(c) || typeof c.id !== 'string' || !c.id) return null;
+      return {
+        id: c.id,
+        project_id: text(c.projectId),
+        project_name: text(c.projectName),
+        cost_date: isoDate(c.date),
+        category: COST_CATEGORIES.includes(text(c.category)) ? text(c.category) : 'Other',
+        labour_type: text(c.labourType),
+        description: text(c.description),
+        supplier: text(c.supplier),
+        amount: amount(c.amount),
+        amount_paid: amount(c.amountPaid),
+        payment_method: text(c.paymentMethod) || 'Bank transfer',
+        reference: text(c.reference),
+        notes: text(c.notes),
+        reversed: c.reversed === true,
+        reversed_at: stamp(c.reversedAt),
+        recorded_at: stamp(c.createdAt) ?? new Date().toISOString(),
+      };
+    },
+    fromRow: (r) => ({
+      id: text(r.id),
+      projectId: text(r.project_id),
+      projectName: text(r.project_name),
+      date: text(r.cost_date),
+      category: text(r.category) || 'Other',
+      labourType: text(r.labour_type),
+      description: text(r.description),
+      supplier: text(r.supplier),
+      amount: amount(r.amount),
+      amountPaid: amount(r.amount_paid),
+      paymentMethod: text(r.payment_method),
+      reference: text(r.reference),
+      notes: text(r.notes),
+      reversed: r.reversed === true,
+      ...(r.reversed_at ? { reversedAt: isoStamp(r.reversed_at) } : {}),
+      createdAt: isoStamp(r.recorded_at),
     }),
   },
 ];
