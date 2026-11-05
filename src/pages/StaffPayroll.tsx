@@ -1,505 +1,926 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
-import { Plus, X, Check, Users, Wallet, CalendarCheck, Banknote, ChevronLeft, ChevronRight, Trash2, Pencil } from 'lucide-react';
-import { auditLog } from '../lib/ledger';
-import { postPayrollPayment, reversePayrollPayment } from '../lib/postings'; // LEDGER
-import type { PayrollMethod } from '../lib/postings';
+import type { ReactNode } from 'react';
+import {
+  Wallet,
+  Plus,
+  Search,
+  X,
+  TrendingUp,
+  FileText,
+  HandCoins,
+  BriefcaseBusiness,
+} from 'lucide-react';
+import { ACC } from '../lib/accounts';
+import { ledger, type JournalEntry } from '../lib/ledger';
+import { useAccess } from '../lib/access';
 
-/** A salary that applies from a month onward ("" = from the very beginning). */
-type SalaryChange = { from: string; amount: number };
-type Staff = {
-  id: string; name: string; position: string;
-  startMonth: string;   // YYYY-MM, first month of employment ('' = no limit)
-  endMonth: string;     // YYYY-MM, last month of employment ('' = still employed)
-  salaryHistory: SalaryChange[]; // first entry has from '' (the starting salary)
+type ProjectStatus = 'Active' | 'Completed' | 'On hold' | 'Cancelled';
+
+type Project = {
+  id: string;
+  projectName: string;
+  location: string;
+  client: string;
+  contractValue: number;
+  totalReceived: number;
+  startDate: string;
+  expectedCompletion: string;
+  status: ProjectStatus;
+  currentPhase: string;
+  notes: string;
+};
+
+type InvoicePayment = {
+  id: string;
+  amount: number;
+  date: string;
+  method: string;
+  reference: string;
+  notes: string;
+};
+
+type Invoice = {
+  id: string;
+  invoiceNumber: string;
+  projectId: string;
+  projectName: string;
+  client: string;
+  description: string;
+  issueDate: string;
+  dueDate: string;
+  amount: number;
+  payments: InvoicePayment[];
+  notes: string;
+  voided: boolean;
   createdAt: string;
 };
-/** One paid salary month. The amount is stored at the time of payment, so later salary changes never rewrite history. */
-type Payment = { id: string; staffId: string; year: number; month: number; amount: number; method?: PayrollMethod; paidAt: string };
-type StaffForm = { name: string; position: string; startMonth: string; endMonth: string; startingSalary: number; changes: SalaryChange[] };
-type LegacyStaff = Partial<Staff> & { id: string; name: string; monthlySalary?: number; active?: boolean };
 
-const STAFF_KEY = 'ista-fortis-staff-v1';
-const PAYMENTS_KEY = 'ista-fortis-payroll-payments-v1';
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const METHODS: PayrollMethod[] = ['Bank transfer', 'Cash', 'Mobile money'];
-
-const ym = (year: number, month: number) => `${year}-${String(month).padStart(2, '0')}`;
-const monthLabel = (value: string) => { const [y, m] = value.split('-'); return m ? `${MONTHS[Number(m) - 1]} ${y}` : value; };
-const money = (n: number) => new Intl.NumberFormat('en-RW', { style: 'currency', currency: 'RWF', maximumFractionDigits: 0 }).format(Number.isFinite(n) ? n : 0);
-
-/** Salary that applies in a given month (YYYY-MM): the latest salary change that has started. */
-const salaryFor = (s: Staff, month: string): number => {
-  let amount = 0;
-  for (const entry of [...s.salaryHistory].sort((a, b) => a.from.localeCompare(b.from))) if (entry.from <= month) amount = entry.amount;
-  return amount;
+type OtherIncome = {
+  date: string;
+  description: string;
+  payer: string;
+  amount: number;
+  method: string;
+  reference: string;
+  projectId: string;
 };
-const employedIn = (s: Staff, month: string) => (!s.startMonth || month >= s.startMonth) && (!s.endMonth || month <= s.endMonth);
 
-function load<T>(key: string): T[] { try { const raw = localStorage.getItem(key); const v = raw ? JSON.parse(raw) : []; return Array.isArray(v) ? v as T[] : []; } catch { return []; } }
-const audit = (action: string, entityId: string, summary: string, details: Record<string, unknown> = {}) => {
-  try { auditLog.log({ action, entityType: 'payroll', entityId, summary, details }); }
-  catch (e) { console.error('Could not write the audit log:', e); }
+const PROJECTS_KEY = 'ista-fortis-projects-v1';
+const INVOICES_KEY = 'ista-fortis-invoices-v1';
+
+const money = (amount: number) =>
+  new Intl.NumberFormat('en-RW', {
+    style: 'currency',
+    currency: 'RWF',
+    maximumFractionDigits: 0,
+  }).format(amount || 0);
+
+const today = () => {
+  const date = new Date();
+  const localDate = new Date(
+    date.getTime() - date.getTimezoneOffset() * 60000
+  );
+  return localDate.toISOString().slice(0, 10);
 };
-const newId = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-const errText = (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback);
-const toPosting = (p: Payment, staffName: string) => ({ id: p.id, staffName, year: p.year, month: p.month, amount: p.amount, method: p.method ?? 'Bank transfer', paidAt: p.paidAt });
 
-/** Brings staff saved by the first version (one monthlySalary, an active flag) up to the current shape. */
-function migrateStaff(raw: LegacyStaff, payments: Payment[], currentMonth: string): Staff {
-  const history = Array.isArray(raw.salaryHistory) && raw.salaryHistory.length ? raw.salaryHistory : [{ from: '', amount: raw.monthlySalary ?? 0 }];
-  let endMonth = raw.endMonth ?? '';
-  if (raw.active === false && !endMonth) {
-    endMonth = payments.filter(p => p.staffId === raw.id).map(p => ym(p.year, p.month)).sort().pop() ?? currentMonth;
+function readStored<T>(key: string, fallback: T): T {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? (JSON.parse(value) as T) : fallback;
+  } catch {
+    return fallback;
   }
-  return { id: raw.id, name: raw.name, position: raw.position ?? '', startMonth: raw.startMonth ?? '', endMonth, salaryHistory: history, createdAt: raw.createdAt ?? new Date().toISOString() };
+}
+
+function safePayments(invoice: Invoice): InvoicePayment[] {
+  return Array.isArray(invoice.payments) ? invoice.payments : [];
+}
+
+function received(invoice: Invoice): number {
+  return safePayments(invoice).reduce(
+    (total, payment) => total + Number(payment.amount || 0),
+    0
+  );
+}
+
+function activeInvoices(invoices: Invoice[]): Invoice[] {
+  return invoices.filter((invoice) => !invoice.voided);
+}
+
+function accountForMethod(method: string): string {
+  if (method === 'Bank transfer' || method === 'Cheque') {
+    return ACC.bank;
+  }
+
+  if (method === 'Mobile money') {
+    return ACC.mobileMoney;
+  }
+
+  return ACC.cash;
 }
 
 /**
  * Page styles live here so this page is a single file. They mirror the Projects page and are
- * scoped under .projects-module, so they restyle this page (and its pop-ups) only.
+ * scoped under .projects-module, so they restyle this page (and its pop-up) only.
  */
-const PAYROLL_CSS = `
+const INCOME_CSS = `
 .projects-module{--lime:#d5f56b;--lime-ink:#1d2b12;--ink:#1c2b22;--muted:#7d8a83;--line:#edf0f1;display:flex;flex-direction:column;gap:22px;color:var(--ink)}
 .projects-module button:focus-visible{outline:2px solid #2f8f6b;outline-offset:2px}
-.projects-module button:disabled{cursor:not-allowed}
 
 /* header */
 .projects-module .welcome-row{margin-bottom:0;gap:20px;flex-wrap:wrap;align-items:flex-end}
 .projects-module .welcome-row h2{font-size:28px;font-weight:700;letter-spacing:-.4px;margin:6px 0 4px;color:var(--ink)}
 .projects-module .welcome-row p{font-size:13px;color:var(--muted)}
-.projects-module .projects-secondary-button{height:39px;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:600}
-.projects-module .projects-secondary-button:hover{background:#f4f7f6}
 .projects-module .primary-button{height:39px;border-radius:12px;background:var(--lime);color:var(--lime-ink);font-size:12px;font-weight:600;box-shadow:none}
 .projects-module .primary-button:hover{background:#c8ea52}
-.projects-module .pr-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-.projects-module .pr-method{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:#4f5d55}
-.projects-module .pr-method select{height:39px;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--ink);padding:0 10px;font:inherit;font-size:12px}
-.projects-module .pr-year{display:inline-flex;align-items:center;gap:4px;height:39px;padding:0 4px;border:1px solid var(--line);border-radius:12px;background:#fff}
-.projects-module .pr-year strong{min-width:46px;text-align:center;font-size:13px}
-.projects-module .pr-year button{width:30px;height:30px;border:0;background:transparent;border-radius:8px;display:grid;place-items:center;color:var(--ink);cursor:pointer}
-.projects-module .pr-year button:hover{background:#f1f5f4}
+.projects-module .projects-import-notice{margin-bottom:0;background:#bdeed6;border:0;color:#1f6b46;border-radius:12px}
 
 /* pastel KPI cards */
 .pj-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.pj-kpis.five{grid-template-columns:repeat(5,minmax(0,1fr))}
 .pj-kpi{--bg:#bdeed6;--fg:#1f7a4f;display:flex;flex-direction:column;background:var(--bg);border-radius:16px;padding:14px 16px 16px;text-align:center;container-type:inline-size;transition:transform .15s ease,box-shadow .15s ease}
 .pj-kpi:hover{transform:translateY(-1px);box-shadow:0 8px 20px #1c2b2214}
 .pj-kpi.tone-green{--bg:#bdeed6;--fg:#1f7a4f}
 .pj-kpi.tone-blue{--bg:#c9defb;--fg:#3a66ad}
 .pj-kpi.tone-amber{--bg:#fde5c4;--fg:#a8691f}
 .pj-kpi.tone-rose{--bg:#fbd6db;--fg:#b04a58}
+.pj-kpi.tone-violet{--bg:#ebe8fb;--fg:#6a5bc2}
 .pj-kpi-top{display:flex;align-items:center;gap:8px;min-height:24px}
 .pj-kpi-icon{width:22px;height:22px;border-radius:50%;background:#ffffffb3;color:var(--fg);display:grid;place-items:center;flex-shrink:0}
 .pj-kpi-label{font-size:11px;font-weight:600;color:#3d4a43;line-height:1.3;text-align:left}
 .pj-kpi-value{font-weight:700;font-size:clamp(16px,10.5cqw,26px);letter-spacing:-.4px;color:var(--ink);margin:16px 0 6px;white-space:nowrap;font-variant-numeric:tabular-nums}
 .pj-kpi-note{font-size:10.5px;color:#4f5d55;margin-top:auto;line-height:1.45}
 
-/* register card */
+/* register cards */
 .projects-module .projects-register{padding:20px 0 6px;background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 1px 2px #1c2b2208;overflow:hidden}
 .projects-module .projects-heading{padding:0 20px 14px}
 .projects-module .projects-heading h3{font-size:16px;font-weight:600;color:var(--ink)}
-.projects-module .projects-heading p{color:var(--muted);max-width:760px}
-.projects-module .pr-toggle{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:#4f5d55;white-space:nowrap}
+.projects-module .projects-heading p{color:var(--muted)}
+.projects-module .projects-search{border-radius:12px;border:1px solid var(--line);background:#fff;height:38px}
+.projects-module .projects-filters select{border-radius:12px;border:1px solid var(--line);height:38px}
+
+/* tables */
+.projects-module .projects-table th{background:transparent;padding:10px 20px;font-size:11px;font-weight:500;letter-spacing:0;color:#8a968f;border-bottom:1px solid var(--line);white-space:nowrap}
+.projects-module .projects-table td{padding:14px 20px;font-size:12px;color:#3b4a42;border-top:0;border-bottom:1px solid #f1f4f4}
+.projects-module .projects-table tbody tr:last-child td{border-bottom:0}
+.projects-module .projects-table tbody tr:hover{background:#f7faf9}
+.projects-module .projects-table strong{font-size:12px;font-weight:600;color:var(--ink)}
+.projects-module .projects-table .num{text-align:right}
+.projects-module .money-cell{white-space:nowrap;font-variant-numeric:tabular-nums}
+.projects-module .inc-sub{display:block;margin-top:3px;font-size:10.5px;color:var(--muted)}
+.projects-module .received-cell .progress-track{background:#eef1f1;border-radius:6px}
+.projects-module .received-cell .progress-track i{background:#6fd6a0;border-radius:6px}
 .projects-module .projects-empty-icon{background:#ebe8fb;color:#6a5bc2;border-radius:14px}
+.projects-module .inc-pill{display:inline-block;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600;background:#eef8f2;color:#1f6b46;white-space:nowrap}
+.projects-module .inc-pill.none{background:#eceff0;color:#6b776f}
 
-/* payroll grid */
-.projects-module .pr-table{min-width:1250px}
-.projects-module .pr-table th{background:transparent;padding:10px 8px;font-size:11px;font-weight:500;letter-spacing:0;color:#8a968f;border-bottom:1px solid var(--line);white-space:nowrap;text-align:center}
-.projects-module .pr-table td{padding:10px 8px;font-size:12px;color:#3b4a42;border-top:0;border-bottom:1px solid #f1f4f4}
-.projects-module .pr-table th.left,.projects-module .pr-table td.left{text-align:left}
-.projects-module .pr-table th.right,.projects-module .pr-table td.right{text-align:right}
-.projects-module .pr-table td.nowrap{white-space:nowrap}
-.projects-module .pr-table th:first-child,.projects-module .pr-table td:first-child{padding-left:20px}
-.projects-module .pr-table th:last-child,.projects-module .pr-table td:last-child{padding-right:20px}
-.projects-module .pr-table .sticky{position:sticky;left:0;background:#fff;z-index:1}
-.projects-module .pr-table tbody tr:last-child td{border-bottom:0}
-.projects-module .pr-table tbody tr:hover td{background:#f7faf9}
-.projects-module .pr-table tr.former td{opacity:.65}
-.projects-module .pr-table tfoot td{background:#eef8f2;font-weight:700;color:var(--ink);border-bottom:0;padding-top:13px;padding-bottom:13px}
-.projects-module .pr-table tfoot td.sticky{background:#eef8f2}
-.projects-module .pr-table tfoot td.small{font-size:10px;white-space:nowrap;padding-left:4px;padding-right:4px}
-.projects-module .pr-month-btn{border:0;background:transparent;padding:4px 6px;border-radius:8px;cursor:pointer;text-transform:uppercase;font:inherit;font-size:10px;font-weight:600;letter-spacing:.4px;color:#8a968f}
-.projects-module .pr-month-btn:hover{background:#eef8f2;color:#1f6b46}
-.projects-module .pr-edit-btn{width:26px;height:26px;margin-right:8px;border:1px solid var(--line);background:#fff;border-radius:8px;display:inline-grid;place-items:center;color:#4f5d55;cursor:pointer;vertical-align:middle}
-.projects-module .pr-edit-btn:hover{background:#f1f5f4;color:var(--ink)}
-.projects-module .pr-name-btn{border:0;background:transparent;padding:0;font:inherit;font-size:12px;font-weight:600;color:var(--ink);cursor:pointer;text-align:left}
-.projects-module .pr-name-btn:hover{text-decoration:underline}
-.projects-module .pr-chip{margin-left:8px;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:600}
-.projects-module .pr-chip.left{background:#fbd6db;color:#b04a58}
-.projects-module .pr-chip.soon{background:#c9defb;color:#3a66ad}
-.projects-module .pr-cell{width:26px;height:26px;border-radius:8px;display:inline-grid;place-items:center;padding:0;cursor:pointer;transition:background .12s ease,border-color .12s ease}
-.projects-module .pr-cell.due{background:#fff;border:1px solid #d3ddd6}
-.projects-module .pr-cell.due:hover{border-color:#6fd6a0;background:#eef8f2}
-.projects-module .pr-cell.paid{background:#6fd6a0;border:1px solid #6fd6a0;color:#14412c}
-.projects-module .pr-cell.off{background:#f3f5f3;border:1px solid #eef1ee;cursor:not-allowed}
+/* note */
+.projects-module .inc-note{padding:14px 16px;border-radius:14px;background:#eef8f2;color:#3f5a4c;font-size:11.5px;line-height:1.6}
 
-/* pop-ups */
+/* pop-up */
 .projects-module .projects-modal{border-radius:18px}
 .projects-module .projects-modal-header h3{color:var(--ink)}
 .projects-module .projects-field input,.projects-module .projects-field select,.projects-module .projects-field textarea{border-radius:10px;border-color:#e5eaec}
 .projects-module .projects-cancel{border-radius:12px;border-color:var(--line)}
 .projects-module .projects-close{border-radius:10px;border:1px solid var(--line)}
 .projects-module .projects-close:hover{background:#f1f5f4;color:var(--ink)}
-.projects-module .pr-pay-modal{width:min(440px,100%)}
-.projects-module .pr-pay-info{margin:0 0 14px;padding:12px 14px;border-radius:12px;background:#fde5c4;color:#7a4c14;font-size:12.5px}
-.projects-module .pr-help{margin:0;font-size:11px;color:var(--muted);line-height:1.5}
-.projects-module .pr-stack{display:grid;gap:12px}
-.projects-module .pr-changes{grid-column:1 / -1;display:grid;gap:10px;padding:14px;border-radius:14px;background:#f7faf9}
-.projects-module .pr-changes-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
-.projects-module .pr-changes-head strong{font-size:12px;color:var(--ink)}
-.projects-module .pr-change-row{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end}
-.projects-module .pr-remove{width:38px;height:38px;border:1px solid var(--line);background:#fff;border-radius:10px;display:grid;place-items:center;color:#b04a58;cursor:pointer}
-.projects-module .pr-remove:hover{background:#fbd6db}
-.projects-module .pr-split{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:18px;flex-wrap:wrap}
-.projects-module .pr-split .group{display:flex;gap:10px;margin-left:auto}
-.projects-module .pr-danger{color:#b04a58}
 
-@media(max-width:1100px){.pj-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:420px){.pj-kpis{grid-template-columns:1fr}.projects-module .pr-change-row{grid-template-columns:1fr}}
-@media(prefers-reduced-motion:reduce){.pj-kpi,.pr-cell{transition:none}.pj-kpi:hover{transform:none}}
+@media(max-width:1280px){.pj-kpis.five{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:1100px){.pj-kpis,.pj-kpis.five{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:420px){.pj-kpis,.pj-kpis.five{grid-template-columns:1fr}}
+@media(max-width:600px){.projects-module .projects-table th,.projects-module .projects-table td{padding-left:14px;padding-right:14px}}
+@media(prefers-reduced-motion:reduce){.pj-kpi{transition:none}.pj-kpi:hover{transform:none}}
 `;
 
-export default function StaffPayroll() {
-  const now = new Date();
-  const currentMonth = ym(now.getFullYear(), now.getMonth() + 1);
-  const [payments, setPayments] = useState<Payment[]>(() => load<Payment>(PAYMENTS_KEY));
-  const [staff, setStaff] = useState<Staff[]>(() => load<LegacyStaff>(STAFF_KEY).map(s => migrateStaff(s, load<Payment>(PAYMENTS_KEY), currentMonth)));
-  const [year, setYear] = useState(now.getFullYear());
-  const [payMethod, setPayMethod] = useState<PayrollMethod>('Bank transfer');
-  const [showFormer, setShowFormer] = useState(true);
+export default function Income() {
+  const { isAdmin } = useAccess(); // Viewers see income but cannot record it
+  const [projects, setProjects] = useState<Project[]>(() =>
+    readStored<Project[]>(PROJECTS_KEY, [])
+  );
 
-  // staff form
-  const blankForm = (): StaffForm => ({ name: '', position: '', startMonth: currentMonth, endMonth: '', startingSalary: 0, changes: [] });
-  const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<Staff | null>(null);
-  const [form, setForm] = useState<StaffForm>(blankForm);
+  const [invoices, setInvoices] = useState<Invoice[]>(() =>
+    readStored<Invoice[]>(INVOICES_KEY, [])
+  );
+
+  const [entries, setEntries] = useState<readonly JournalEntry[]>(() =>
+    ledger.getEntries()
+  );
+
+  const [showForm, setShowForm] = useState(false);
+  const [search, setSearch] = useState('');
+  const [selectedProject, setSelectedProject] = useState('all');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
-  // month payment window
-  const [payCell, setPayCell] = useState<{ staffId: string; month: number } | null>(null);
-  const [payForm, setPayForm] = useState<{ amount: number; method: PayrollMethod }>({ amount: 0, method: 'Bank transfer' });
-  const [payError, setPayError] = useState('');
+  const [form, setForm] = useState<OtherIncome>({
+    date: today(),
+    description: '',
+    payer: '',
+    amount: 0,
+    method: 'Cash',
+    reference: '',
+    projectId: '',
+  });
 
-  useEffect(() => { localStorage.setItem(STAFF_KEY, JSON.stringify(staff)); }, [staff]);
-  useEffect(() => { localStorage.setItem(PAYMENTS_KEY, JSON.stringify(payments)); }, [payments]);
+  const refreshData = () => {
+    setProjects(readStored<Project[]>(PROJECTS_KEY, []));
+    setInvoices(readStored<Invoice[]>(INVOICES_KEY, []));
+    setEntries(ledger.getEntries());
+  };
 
-  // LEDGER: post any existing payment that has no ledger entry yet. Safe to run repeatedly.
   useEffect(() => {
-    payments.forEach(p => {
-      const s = staff.find(x => x.id === p.staffId);
-      try { postPayrollPayment(toPosting(p, s?.name ?? 'Staff')); }
-      catch (e) { console.error(`Could not post payroll payment ${p.id} to the ledger:`, e); }
+    const unsubscribe = ledger.subscribe(() => {
+      setEntries(ledger.getEntries());
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    const handleStorage = () => refreshData();
+
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('storage', handleStorage);
+    };
   }, []);
 
-  const yearPayments = useMemo(() => payments.filter(p => p.year === year), [payments, year]);
-  const paidMap = useMemo(() => new Map(yearPayments.map(p => [`${p.staffId}|${p.month}`, p])), [yearPayments]);
+  const projectMap = useMemo(
+    () => new Map(projects.map((project) => [project.id, project])),
+    [projects]
+  );
 
-  // Month used to show a salary in the table: this month, or December / January of another year.
-  const refMonth = year === now.getFullYear() ? currentMonth : year < now.getFullYear() ? ym(year, 12) : ym(year, 1);
+  const validInvoices = useMemo(
+    () => activeInvoices(invoices),
+    [invoices]
+  );
 
-  const rows = useMemo(() => staff
-    .filter(s => showFormer || !(s.endMonth && s.endMonth < currentMonth))
-    .map(s => {
-      const mine = yearPayments.filter(p => p.staffId === s.id);
-      return { staff: s, months: mine.length, total: mine.reduce((sum, p) => sum + p.amount, 0) };
-    }), [staff, yearPayments, showFormer, currentMonth]);
+  const projectSummaries = useMemo(() => {
+    return projects.map((project) => {
+      const projectInvoices = validInvoices.filter(
+        (invoice) => invoice.projectId === project.id
+      );
 
-  const monthTotals = useMemo(() => MONTHS.map((_, i) => yearPayments.filter(p => p.month === i + 1).reduce((s, p) => s + p.amount, 0)), [yearPayments]);
-  const yearTotal = monthTotals.reduce((s, n) => s + n, 0);
-  const activeStaff = staff.filter(s => employedIn(s, currentMonth));
-  const monthlyPayroll = activeStaff.reduce((s, x) => s + salaryFor(x, currentMonth), 0);
-  const paidThisMonth = payments.filter(p => p.year === now.getFullYear() && p.month === now.getMonth() + 1).reduce((s, p) => s + p.amount, 0);
+      const invoiced = projectInvoices.reduce(
+        (total, invoice) => total + Number(invoice.amount || 0),
+        0
+      );
 
-  /* ---------- paying a month ---------- */
-  const openPay = (s: Staff, month: number) => {
-    const existing = paidMap.get(`${s.id}|${month}`);
-    setPayForm({ amount: existing ? existing.amount : salaryFor(s, ym(year, month)), method: existing?.method ?? payMethod });
-    setPayError(''); setPayCell({ staffId: s.id, month });
+      const collected = projectInvoices.reduce(
+        (total, invoice) => total + received(invoice),
+        0
+      );
+
+      return {
+        project,
+        invoiced,
+        collected,
+        outstanding: Math.max(invoiced - collected, 0),
+      };
+    });
+  }, [projects, validInvoices]);
+
+  const totalContractValue = projects.reduce(
+    (total, project) => total + Number(project.contractValue || 0),
+    0
+  );
+
+  const totalInvoiced = validInvoices.reduce(
+    (total, invoice) => total + Number(invoice.amount || 0),
+    0
+  );
+
+  const totalCollected = validInvoices.reduce(
+    (total, invoice) => total + received(invoice),
+    0
+  );
+
+  const totalOutstanding = Math.max(totalInvoiced - totalCollected, 0);
+
+  const otherIncomeEntries = useMemo(() => {
+    return entries.filter((entry) => {
+      if (entry.reversalOf) return false;
+
+      return (
+        entry.lines.some(
+          (line) => line.account === ACC.otherIncome && line.credit > 0
+        ) &&
+        !entries.some((reversal) => reversal.reversalOf === entry.id)
+      );
+    });
+  }, [entries]);
+
+  const otherIncomeTotal = otherIncomeEntries.reduce((total, entry) => {
+    const credit = entry.lines
+      .filter((line) => line.account === ACC.otherIncome)
+      .reduce((sum, line) => sum + line.credit, 0);
+
+    const debit = entry.lines
+      .filter((line) => line.account === ACC.otherIncome)
+      .reduce((sum, line) => sum + line.debit, 0);
+
+    return total + credit - debit;
+  }, 0);
+
+  const filteredEntries = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return otherIncomeEntries.filter((entry) => {
+      const projectId = entry.lines.find((line) => line.projectId)?.projectId;
+      const project = projectId ? projectMap.get(projectId) : undefined;
+
+      const matchesProject =
+        selectedProject === 'all' ||
+        (selectedProject === 'none' && !projectId) ||
+        projectId === selectedProject;
+
+      const matchesSearch =
+        !query ||
+        entry.description.toLowerCase().includes(query) ||
+        (entry.reference || '').toLowerCase().includes(query) ||
+        (project?.projectName || '').toLowerCase().includes(query) ||
+        entry.lines.some(
+          (line) =>
+            (line.party || '').toLowerCase().includes(query) ||
+            (line.memo || '').toLowerCase().includes(query)
+        );
+
+      return matchesProject && matchesSearch;
+    });
+  }, [otherIncomeEntries, search, selectedProject, projectMap]);
+
+  const collectedPct =
+    totalInvoiced > 0 ? Math.round((totalCollected / totalInvoiced) * 100) : 0;
+
+  const resetForm = () => {
+    setForm({
+      date: today(),
+      description: '',
+      payer: '',
+      amount: 0,
+      method: 'Cash',
+      reference: '',
+      projectId: '',
+    });
+    setError('');
   };
-  const closePay = () => { setPayCell(null); setPayError(''); };
 
-  const submitPay = () => {
-    if (!payCell) return;
-    const s = staff.find(x => x.id === payCell.staffId); if (!s) return;
-    const month = payCell.month;
-    const label = `${MONTHS[month - 1]} ${year}`;
-    const existing = paidMap.get(`${s.id}|${month}`);
-    if (!Number.isInteger(payForm.amount) || payForm.amount <= 0) { setPayError('Enter a whole RWF amount above zero.'); return; }
-    if (existing && existing.amount === payForm.amount && (existing.method ?? 'Bank transfer') === payForm.method) { closePay(); return; }
-    if (existing) {
-      // LEDGER: a posted entry is never edited, so a correction reverses it and posts a new one
-      try { reversePayrollPayment(existing.id, `${label} salary corrected for ${s.name}`); }
-      catch (e) { setPayError(errText(e, 'Could not reverse in the ledger.')); return; }
-      setPayments(old => old.filter(p => p.id !== existing.id));
+  const closeForm = () => {
+    setShowForm(false);
+    resetForm();
+  };
+
+  const recordOtherIncome = () => {
+    setError('');
+    setSuccess('');
+
+    if (!form.date) {
+      setError('Please select the income date.');
+      return;
     }
-    const record: Payment = { id: newId('PAY'), staffId: s.id, year, month, amount: payForm.amount, method: payForm.method, paidAt: existing?.paidAt ?? new Date().toISOString() };
-    // LEDGER: post first, so a payment is never saved without its journal entry
-    try { postPayrollPayment(toPosting(record, s.name)); }
-    catch (e) { setPayError(`${errText(e, 'Could not post to the ledger.')}${existing ? ' The previous payment was reversed, so this month is now unpaid.' : ''}`); return; }
-    setPayments(old => [...old, record]);
-    audit(existing ? 'payroll.corrected' : 'payroll.paid', record.id, `${existing ? 'Corrected' : 'Paid'} ${label} salary for ${s.name}`, { staffId: s.id, year, month, amount: record.amount, method: record.method, previousAmount: existing?.amount });
-    closePay();
-  };
 
-  const removePay = () => {
-    if (!payCell) return;
-    const s = staff.find(x => x.id === payCell.staffId); if (!s) return;
-    const existing = paidMap.get(`${s.id}|${payCell.month}`); if (!existing) return;
-    const label = `${MONTHS[payCell.month - 1]} ${year}`;
-    if (!window.confirm(`Remove the ${label} payment of ${money(existing.amount)} for ${s.name}? A reversing entry will be posted to the ledger.`)) return;
-    // LEDGER: post the reversing entry first
-    try { reversePayrollPayment(existing.id, `${label} salary removed for ${s.name}`); }
-    catch (e) { setPayError(errText(e, 'Could not reverse in the ledger.')); return; }
-    setPayments(old => old.filter(p => p.id !== existing.id));
-    audit('payroll.unpaid', existing.id, `Removed ${label} salary payment for ${s.name}`, { staffId: s.id, year, month: payCell.month, amount: existing.amount });
-    closePay();
-  };
-
-  const payAll = (month: number) => {
-    const label = `${MONTHS[month - 1]} ${year}`;
-    const due = staff.filter(s => employedIn(s, ym(year, month)) && salaryFor(s, ym(year, month)) > 0 && !paidMap.has(`${s.id}|${month}`));
-    if (!due.length) { window.alert(`Everyone employed is already paid for ${label}.`); return; }
-    const total = due.reduce((s, x) => s + salaryFor(x, ym(year, month)), 0);
-    if (!window.confirm(`Mark ${due.length} staff as paid for ${label} by ${payMethod}? Total ${money(total)}.`)) return;
-    const base = Date.now();
-    const added: Payment[] = [];
-    let failure = '';
-    for (const s of due) {
-      const record: Payment = { id: newId('PAY'), staffId: s.id, year, month, amount: salaryFor(s, ym(year, month)), method: payMethod, paidAt: new Date(base + added.length).toISOString() };
-      // LEDGER: post first, so a payment is never saved without its journal entry
-      try { postPayrollPayment(toPosting(record, s.name)); added.push(record); }
-      catch (e) { failure = errText(e, 'Could not post to the ledger.'); break; }
+    if (!form.description.trim()) {
+      setError('Please enter an income description.');
+      return;
     }
-    if (added.length) {
-      setPayments(old => [...old, ...added]);
-      audit('payroll.paid_all', ym(year, month), `Paid ${label} salaries to ${added.length} staff`, { year, month, method: payMethod, total: added.reduce((s, p) => s + p.amount, 0), ids: added.map(p => p.id) });
+
+    if (!form.amount || form.amount <= 0) {
+      setError('Enter an amount greater than zero.');
+      return;
     }
-    if (failure) window.alert(`Paid ${added.length} of ${due.length}. Stopped because the ledger rejected a payment: ${failure}`);
-  };
 
-  /* ---------- staff form ---------- */
-  const openAdd = () => { setEditing(null); setForm(blankForm()); setError(''); setFormOpen(true); };
-  const openEdit = (s: Staff) => {
-    const sorted = [...s.salaryHistory].sort((a, b) => a.from.localeCompare(b.from));
-    setEditing(s);
-    setForm({ name: s.name, position: s.position, startMonth: s.startMonth, endMonth: s.endMonth, startingSalary: sorted[0]?.amount ?? 0, changes: sorted.slice(1) });
-    setError(''); setFormOpen(true);
-  };
-  const setField = <K extends keyof StaffForm>(key: K, value: StaffForm[K]) => setForm(old => ({ ...old, [key]: value }));
-  const addChange = () => setForm(old => ({ ...old, changes: [...old.changes, { from: '', amount: 0 }] }));
-  const updateChange = (i: number, patch: Partial<SalaryChange>) => setForm(old => ({ ...old, changes: old.changes.map((c, idx) => idx === i ? { ...c, ...patch } : c) }));
-  const removeChange = (i: number) => setForm(old => ({ ...old, changes: old.changes.filter((_, idx) => idx !== i) }));
-
-  const saveStaff = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setError('');
-    const name = form.name.trim();
-    const okSalary = (n: number) => Number.isInteger(n) && n >= 0;
-    if (!name) { setError('Enter the staff member\u2019s name.'); return; }
-    if (form.startMonth && form.endMonth && form.endMonth < form.startMonth) { setError('The last month of employment cannot be before the first month.'); return; }
-    if (!okSalary(form.startingSalary)) { setError('Enter the starting salary in whole RWF.'); return; }
-    const seen = new Set<string>();
-    for (const c of form.changes) {
-      if (!c.from) { setError('Choose the month each salary change starts from.'); return; }
-      if (!okSalary(c.amount)) { setError('Enter each changed salary in whole RWF.'); return; }
-      if (seen.has(c.from)) { setError(`There are two salary changes for ${monthLabel(c.from)}. Keep one.`); return; }
-      seen.add(c.from);
+    if (
+      form.projectId &&
+      !projects.some((project) => project.id === form.projectId)
+    ) {
+      setError('The selected project could not be found. Refresh and try again.');
+      return;
     }
-    const salaryHistory: SalaryChange[] = [{ from: '', amount: form.startingSalary }, ...[...form.changes].sort((a, b) => a.from.localeCompare(b.from))];
-    if (editing) {
-      setStaff(old => old.map(s => s.id === editing.id ? { ...s, name, position: form.position.trim(), startMonth: form.startMonth, endMonth: form.endMonth, salaryHistory } : s));
-      audit('staff.updated', editing.id, `Updated staff member ${name}`, { before: { start: editing.startMonth, end: editing.endMonth, salaryHistory: editing.salaryHistory }, after: { start: form.startMonth, end: form.endMonth, salaryHistory } });
-    } else {
-      const nextNo = staff.reduce((max, s) => { const m = s.id.match(/^STF-(\d+)$/); return m ? Math.max(max, Number(m[1])) : max; }, 0) + 1;
-      const record: Staff = { id: `STF-${String(nextNo).padStart(3, '0')}`, name, position: form.position.trim(), startMonth: form.startMonth, endMonth: form.endMonth, salaryHistory, createdAt: new Date().toISOString() };
-      setStaff(old => [...old, record]);
-      audit('staff.added', record.id, `Added staff member ${name}`, { position: record.position, startMonth: record.startMonth, salaryHistory });
+
+    const project = projects.find(
+      (item) => item.id === form.projectId
+    );
+
+    const sourceId = `other-income-${Date.now()}`;
+
+    try {
+      ledger.post({
+        date: form.date,
+        description: form.description.trim(),
+        sourceType: 'manual',
+        sourceId,
+        idempotencyKey: sourceId,
+        reference: form.reference.trim() || undefined,
+        lines: [
+          {
+            account: accountForMethod(form.method),
+            debit: form.amount,
+            party: form.payer.trim() || undefined,
+            projectId: form.projectId || undefined,
+            memo: form.description.trim(),
+          },
+          {
+            account: ACC.otherIncome,
+            credit: form.amount,
+            party: form.payer.trim() || undefined,
+            projectId: form.projectId || undefined,
+            memo: project
+              ? `${project.projectName} - ${form.description.trim()}`
+              : form.description.trim(),
+          },
+        ],
+      });
+
+      setSuccess('Other income recorded successfully.');
+      resetForm();
+      setShowForm(false);
+      setEntries(ledger.getEntries());
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to record this income.'
+      );
     }
-    setFormOpen(false);
   };
 
-  const deleteStaff = () => {
-    if (!editing) return;
-    if (payments.some(p => p.staffId === editing.id)) { setError('This person has salary payments on record, so they cannot be deleted. Set the last month of employment instead.'); return; }
-    if (!window.confirm(`Delete ${editing.name}?`)) return;
-    setStaff(old => old.filter(s => s.id !== editing.id));
-    audit('staff.deleted', editing.id, `Deleted staff member ${editing.name}`);
-    setFormOpen(false);
+  const entryAmount = (entry: JournalEntry) =>
+    entry.lines
+      .filter((line) => line.account === ACC.otherIncome)
+      .reduce((total, line) => total + line.credit - line.debit, 0);
+
+  const entryProject = (entry: JournalEntry) => {
+    const projectId = entry.lines.find(
+      (line) => line.projectId
+    )?.projectId;
+
+    return projectId ? projectMap.get(projectId) : undefined;
   };
 
-  const payStaff = payCell ? staff.find(s => s.id === payCell.staffId) : undefined;
-  const payExisting = payCell && payStaff ? paidMap.get(`${payStaff.id}|${payCell.month}`) : undefined;
-  const monthName = MONTHS[now.getMonth()];
+  return (
+    <section className="projects-module">
+      <style>{INCOME_CSS}</style>
 
-  return <section className="projects-module">
-    <style>{PAYROLL_CSS}</style>
-
-    <div className="welcome-row">
-      <div><div className="eyebrow">PEOPLE &amp; PAYROLL</div><h2>Staff &amp; Payroll</h2><p>Manage staff, their salaries by month, and which months have been paid.</p></div>
-      <div className="pr-controls">
-        <label className="pr-method">Pay from
-          <select value={payMethod} onChange={e => setPayMethod(e.target.value as PayrollMethod)}>{METHODS.map(m => <option key={m}>{m}</option>)}</select>
-        </label>
-        <div className="pr-year">
-          <button onClick={() => setYear(y => y - 1)} aria-label="Previous year"><ChevronLeft size={15} /></button>
-          <strong>{year}</strong>
-          <button onClick={() => setYear(y => y + 1)} aria-label="Next year"><ChevronRight size={15} /></button>
-        </div>
-        <button className="primary-button" onClick={openAdd}><Plus size={16} /> Add staff</button>
-      </div>
-    </div>
-
-    <div className="pj-kpis">
-      <Metric title="Staff this month" value={String(activeStaff.length)} note={`${staff.length - activeStaff.length} not currently employed`} icon={<Users size={13} />} tone="blue" />
-      <Metric title="Monthly payroll" value={money(monthlyPayroll)} note={`Salaries for ${monthName}`} icon={<Banknote size={13} />} tone="amber" />
-      <Metric title={`Paid in ${year}`} value={money(yearTotal)} note={`${yearPayments.length} salary payment${yearPayments.length === 1 ? '' : 's'}`} icon={<Wallet size={13} />} tone="green" />
-      <Metric title={`Paid in ${monthName}`} value={money(paidThisMonth)} note={`Current month, ${now.getFullYear()}`} icon={<CalendarCheck size={13} />} tone="rose" />
-    </div>
-
-    <div className="panel projects-register">
-      <div className="panel-heading projects-heading">
+      <div className="welcome-row">
         <div>
-          <h3>Payroll {year}</h3>
-          <p>Click a month to pay it, change the amount, or remove it. Click a month name to pay everyone employed that month. Use the pencil to edit a staff member. Each payment is posted to the ledger as Staff Salaries.</p>
+          <div className="eyebrow">FINANCIAL MANAGEMENT</div>
+          <h2>Income</h2>
+          <p>Project revenue, client collections and other business income.</p>
         </div>
-        <label className="pr-toggle"><input type="checkbox" checked={showFormer} onChange={e => setShowFormer(e.target.checked)} /> Show former staff</label>
+
+        {isAdmin && <div className="projects-header-actions">
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => {
+              setError('');
+              setSuccess('');
+              setShowForm(true);
+            }}
+          >
+            <Plus size={16} /> Record other income
+          </button>
+        </div>}
       </div>
 
-      {rows.length === 0 ? (
-        <div className="projects-empty">
-          <div className="projects-empty-icon"><Users size={24} /></div>
-          <h3>No staff added yet</h3>
-          <p>Add your staff with their start month and salary, then pay each month as it falls due.</p>
-          <div className="projects-header-actions" style={{ justifyContent: 'center' }}>
-            <button className="primary-button" onClick={openAdd}><Plus size={16} /> Add first staff member</button>
-          </div>
-        </div>
-      ) : (
-        <div className="projects-table-wrap">
-          <table className="projects-table pr-table">
-            <thead><tr>
-              <th className="left sticky">Name</th>
-              <th className="left">Position</th>
-              <th className="right" title={`Salary for ${monthLabel(refMonth)}`}>Monthly salary</th>
-              {MONTHS.map((m, i) => <th key={m}><button type="button" className="pr-month-btn" onClick={() => payAll(i + 1)} title={`Pay everyone employed in ${m} ${year}`}>{m.slice(0, 3)}</button></th>)}
-              <th>Months paid</th>
-              <th className="right">Total paid</th>
-            </tr></thead>
-            <tbody>{rows.map(({ staff: s, months, total }) => {
-              const former = !!s.endMonth && s.endMonth < currentMonth;
-              const notStarted = !!s.startMonth && s.startMonth > currentMonth;
-              return <tr key={s.id} className={former ? 'former' : undefined}>
-                <td className="left sticky nowrap">
-                  <button type="button" className="pr-edit-btn" onClick={() => openEdit(s)} title="Edit staff member" aria-label={`Edit ${s.name}`}><Pencil size={12} /></button>
-                  <button type="button" className="pr-name-btn" onClick={() => openEdit(s)}>{s.name}</button>
-                  {former && <span className="pr-chip left">Left {monthLabel(s.endMonth)}</span>}
-                  {notStarted && <span className="pr-chip soon">Starts {monthLabel(s.startMonth)}</span>}
-                </td>
-                <td className="left nowrap">{s.position || '—'}</td>
-                <td className="right nowrap money-cell">{money(salaryFor(s, refMonth))}</td>
-                {MONTHS.map((m, i) => {
-                  const month = ym(year, i + 1);
-                  const p = paidMap.get(`${s.id}|${i + 1}`);
-                  const employed = employedIn(s, month);
-                  const clickable = employed || !!p;
-                  return <td key={m} style={{ padding: '8px 4px' }}>
-                    <button type="button" disabled={!clickable} onClick={() => openPay(s, i + 1)}
-                      className={`pr-cell ${p ? 'paid' : employed ? 'due' : 'off'}`}
-                      aria-label={`${s.name}, ${m} ${year}: ${p ? 'paid' : employed ? 'not paid' : 'not employed'}`}
-                      title={p ? `Paid ${money(p.amount)} by ${p.method ?? 'Bank transfer'} on ${new Date(p.paidAt).toLocaleDateString()}` : employed ? `Salary ${money(salaryFor(s, month))}. Click to pay.` : 'Not employed this month'}>
-                      {p && <Check size={15} strokeWidth={3} />}
-                    </button>
-                  </td>;
-                })}
-                <td>{months}</td>
-                <td className="right nowrap money-cell"><strong>{money(total)}</strong></td>
-              </tr>;
-            })}</tbody>
-            <tfoot><tr>
-              <td className="left sticky">Total</td>
-              <td />
-              <td className="right nowrap money-cell">{money(rows.filter(r => employedIn(r.staff, refMonth)).reduce((s, r) => s + salaryFor(r.staff, refMonth), 0))}</td>
-              {monthTotals.map((t, i) => <td key={i} className="small">{t ? money(t) : '—'}</td>)}
-              <td>{yearPayments.length}</td>
-              <td className="right nowrap money-cell">{money(yearTotal)}</td>
-            </tr></tfoot>
-          </table>
+      {success && (
+        <div className="projects-import-notice" role="status">
+          <span>{success}</span>
+          <button onClick={() => setSuccess('')} aria-label="Dismiss">
+            <X size={15} />
+          </button>
         </div>
       )}
-    </div>
+      {error && !showForm && (
+        <p className="projects-validation" role="alert">
+          {error}
+        </p>
+      )}
 
-    {payCell && payStaff && <div className="projects-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) closePay(); }}>
-      <section className="projects-modal pr-pay-modal" role="dialog" aria-modal="true" aria-labelledby="pay-title">
-        <div className="projects-modal-header">
-          <div><div className="eyebrow">{payExisting ? 'SALARY PAID' : 'PAY SALARY'}</div><h3 id="pay-title">{payStaff.name} · {MONTHS[payCell.month - 1]} {year}</h3></div>
-          <button className="projects-close" onClick={closePay} aria-label="Close"><X size={19} /></button>
-        </div>
-        <p className="pr-pay-info">Scheduled salary for this month: <strong>{money(salaryFor(payStaff, ym(year, payCell.month)))}</strong>{payExisting && <> · Paid on {new Date(payExisting.paidAt).toLocaleDateString()}</>}</p>
-        <div className="pr-stack">
-          <label className="projects-field">Amount (RWF)<input type="number" min="1" step="1" value={payForm.amount || ''} onChange={e => setPayForm(f => ({ ...f, amount: Number(e.target.value) }))} /></label>
-          <label className="projects-field">Paid from<select value={payForm.method} onChange={e => setPayForm(f => ({ ...f, method: e.target.value as PayrollMethod }))}>{METHODS.map(m => <option key={m}>{m}</option>)}</select></label>
-          {payExisting && <p className="pr-help">Changing a paid amount reverses the old ledger entry and posts a new one, so the history stays complete.</p>}
-          {payError && <p className="projects-validation" role="alert">{payError}</p>}
-        </div>
-        <div className="pr-split">
-          {payExisting && <button type="button" className="projects-cancel pr-danger" onClick={removePay}><Trash2 size={14} /> Remove payment</button>}
-          <div className="group">
-            <button type="button" className="projects-cancel" onClick={closePay}>Cancel</button>
-            <button type="button" className="primary-button" onClick={submitPay}><Check size={15} /> {payExisting ? 'Save changes' : 'Mark as paid'}</button>
+      <div className="pj-kpis five">
+        <Metric
+          icon={<BriefcaseBusiness size={13} />}
+          label="Project contract value"
+          value={money(totalContractValue)}
+          note={`${projects.length} registered project${projects.length === 1 ? '' : 's'}`}
+          tone="blue"
+        />
+        <Metric
+          icon={<FileText size={13} />}
+          label="Client invoiced"
+          value={money(totalInvoiced)}
+          note={`${validInvoices.length} active invoice${validInvoices.length === 1 ? '' : 's'}`}
+          tone="amber"
+        />
+        <Metric
+          icon={<HandCoins size={13} />}
+          label="Client receipts"
+          value={money(totalCollected)}
+          note={
+            totalInvoiced > 0
+              ? `${collectedPct}% of invoiced amount collected`
+              : 'No invoices issued yet'
+          }
+          tone="green"
+        />
+        <Metric
+          icon={<TrendingUp size={13} />}
+          label="Invoice outstanding"
+          value={money(totalOutstanding)}
+          note="Invoiced but not yet received"
+          tone="rose"
+        />
+        <Metric
+          icon={<Wallet size={13} />}
+          label="Other income"
+          value={money(otherIncomeTotal)}
+          note={`${otherIncomeEntries.length} transaction${otherIncomeEntries.length === 1 ? '' : 's'} recorded`}
+          tone="violet"
+        />
+      </div>
+
+      <div className="panel projects-register">
+        <div className="panel-heading projects-heading">
+          <div>
+            <h3>Project income overview</h3>
+            <p>
+              Project values come from Projects. Invoicing and collections come
+              from Client Invoices.
+            </p>
           </div>
         </div>
-      </section>
-    </div>}
 
-    {formOpen && <div className="projects-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setFormOpen(false); }}>
-      <section className="projects-modal" role="dialog" aria-modal="true" aria-labelledby="staff-form-title">
-        <div className="projects-modal-header">
-          <div><div className="eyebrow">{editing ? editing.id : 'NEW STAFF MEMBER'}</div><h3 id="staff-form-title">{editing ? 'Edit staff member' : 'Add staff member'}</h3></div>
-          <button className="projects-close" onClick={() => setFormOpen(false)} aria-label="Close"><X size={19} /></button>
+        {projectSummaries.length === 0 ? (
+          <Empty
+            icon={<BriefcaseBusiness size={24} />}
+            title="No projects found"
+            message="Register a project first to see its income position here."
+          />
+        ) : (
+          <div className="projects-table-wrap">
+            <table className="projects-table">
+              <thead>
+                <tr>
+                  <th>Project</th>
+                  <th>Client</th>
+                  <th>Contract value</th>
+                  <th>Invoiced</th>
+                  <th>Received</th>
+                  <th>Outstanding</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projectSummaries.map(({ project, invoiced, collected, outstanding }) => {
+                  const progress =
+                    invoiced > 0 ? Math.min((collected / invoiced) * 100, 100) : 0;
+
+                  return (
+                    <tr key={project.id}>
+                      <td>
+                        <strong>{project.projectName}</strong>
+                        <span className="inc-sub">{project.id}</span>
+                      </td>
+                      <td>{project.client || '—'}</td>
+                      <td className="money-cell">{money(project.contractValue)}</td>
+                      <td className="money-cell">{money(invoiced)}</td>
+                      <td>
+                        <div className="received-cell">
+                          <strong>{money(collected)}</strong>
+                          <div className="progress-track">
+                            <i style={{ width: `${progress}%` }} />
+                          </div>
+                          <small>{progress.toFixed(0)}% of invoiced</small>
+                        </div>
+                      </td>
+                      <td className="money-cell">
+                        <strong>{money(outstanding)}</strong>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="panel projects-register">
+        <div className="panel-heading projects-heading">
+          <div>
+            <h3>Other income transactions</h3>
+            <p>
+              Income recorded directly in this module, separate from client
+              invoices. {filteredEntries.length} record
+              {filteredEntries.length === 1 ? '' : 's'} displayed.
+            </p>
+          </div>
+
+          <div className="projects-filters">
+            <label className="projects-search">
+              <Search size={15} />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search income..."
+              />
+            </label>
+
+            <select
+              value={selectedProject}
+              onChange={(event) => setSelectedProject(event.target.value)}
+              aria-label="Filter by project"
+            >
+              <option value="all">All projects</option>
+              <option value="none">Non-project income</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.projectName}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        <form onSubmit={saveStaff}>
-          <div className="projects-form-grid">
-            <label className="projects-field">Full name *<input required value={form.name} onChange={e => setField('name', e.target.value)} placeholder="e.g. Eugene TUYIZERE" /></label>
-            <label className="projects-field">Position<input value={form.position} onChange={e => setField('position', e.target.value)} placeholder="e.g. Foreman" /></label>
-            <label className="projects-field">First month of employment<input type="month" value={form.startMonth} onChange={e => setField('startMonth', e.target.value)} /></label>
-            <label className="projects-field">Last month of employment<input type="month" value={form.endMonth} onChange={e => setField('endMonth', e.target.value)} /></label>
-            <p className="pr-help field-wide">Months outside this period are greyed out and cannot be paid. Leave the last month empty while they are still employed.</p>
 
-            <label className="projects-field field-wide">Starting salary per month (RWF) *<input required type="number" min="0" step="1" value={form.startingSalary || ''} onChange={e => setField('startingSalary', Number(e.target.value))} /></label>
+        {filteredEntries.length === 0 ? (
+          <Empty
+            icon={<Wallet size={24} />}
+            title={
+              otherIncomeEntries.length
+                ? 'No matching income'
+                : 'No other income recorded yet'
+            }
+            message={
+              otherIncomeEntries.length
+                ? 'Try another search term or project filter.'
+                : isAdmin ? 'Record income that is not a client invoice, such as interest or sundry receipts.' : 'Other income will appear here once the Admin records it.'
+            }
+            action={
+              !otherIncomeEntries.length && isAdmin ? (
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => setShowForm(true)}
+                >
+                  <Plus size={16} /> Record first income
+                </button>
+              ) : undefined
+            }
+          />
+        ) : (
+          <div className="projects-table-wrap">
+            <table className="projects-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th>Project</th>
+                  <th>Payer</th>
+                  <th>Reference</th>
+                  <th className="num">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredEntries.map((entry) => {
+                  const project = entryProject(entry);
+                  const payer = entry.lines.find(
+                    (line) => line.party
+                  )?.party;
 
-            <div className="pr-changes">
-              <div className="pr-changes-head"><strong>Salary changes</strong><button type="button" className="projects-secondary-button" onClick={addChange}><Plus size={14} /> Add salary change</button></div>
-              {form.changes.length === 0 && <p className="pr-help">No changes. The starting salary applies to every month.</p>}
-              {form.changes.map((c, i) => <div key={i} className="pr-change-row">
-                <label className="projects-field">New salary from<input type="month" value={c.from} onChange={e => updateChange(i, { from: e.target.value })} /></label>
-                <label className="projects-field">Salary (RWF)<input type="number" min="0" step="1" value={c.amount || ''} onChange={e => updateChange(i, { amount: Number(e.target.value) })} /></label>
-                <button type="button" className="pr-remove" onClick={() => removeChange(i)} aria-label="Remove salary change"><Trash2 size={14} /></button>
-              </div>)}
-              <p className="pr-help">A change applies from that month onward. Months already paid keep the amount they were paid.</p>
+                  return (
+                    <tr key={entry.id}>
+                      <td className="money-cell">{entry.date}</td>
+                      <td>
+                        <strong>{entry.description}</strong>
+                      </td>
+                      <td>
+                        <span className={`inc-pill${project ? '' : ' none'}`}>
+                          {project?.projectName || 'Non-project'}
+                        </span>
+                      </td>
+                      <td>{payer || '—'}</td>
+                      <td>{entry.reference || '—'}</td>
+                      <td className="money-cell num">
+                        <strong>{money(entryAmount(entry))}</strong>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="inc-note">
+        <strong>Accounting note:</strong> Client invoices and their payments
+        are read from the Client Invoices register. This page does not post
+        them again. Other income recorded here is posted to the ledger as
+        debit Cash/Bank/Mobile Money and credit Other Income.
+      </div>
+
+      {showForm && isAdmin && (
+        <div
+          className="projects-modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeForm();
+          }}
+        >
+          <section
+            className="projects-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="income-form-title"
+          >
+            <div className="projects-modal-header">
+              <div>
+                <div className="eyebrow">NEW INCOME</div>
+                <h3 id="income-form-title">Record other income</h3>
+              </div>
+
+              <button
+                type="button"
+                className="projects-close"
+                onClick={closeForm}
+                aria-label="Close"
+              >
+                <X size={19} />
+              </button>
             </div>
-          </div>
 
-          {error && <p className="projects-validation" role="alert">{error}</p>}
-          <div className="pr-split">
-            {editing && <button type="button" className="projects-cancel pr-danger" onClick={deleteStaff}><Trash2 size={14} /> Delete</button>}
-            <div className="group">
-              <button type="button" className="projects-cancel" onClick={() => setFormOpen(false)}>Cancel</button>
-              <button type="submit" className="primary-button"><Plus size={15} /> {editing ? 'Save changes' : 'Add staff'}</button>
+            <p className="inc-sub" style={{ marginTop: 0, marginBottom: 14 }}>
+              Record income that is not a client invoice or client payment.
+            </p>
+
+            {error && (
+              <p className="projects-validation" role="alert">
+                {error}
+              </p>
+            )}
+
+            <div className="projects-form-grid">
+              <label className="projects-field">
+                Income date *
+                <input
+                  type="date"
+                  value={form.date}
+                  onChange={(event) =>
+                    setForm({ ...form, date: event.target.value })
+                  }
+                />
+              </label>
+
+              <label className="projects-field">
+                Income amount (RWF) *
+                <input
+                  type="number"
+                  min="1"
+                  value={form.amount || ''}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      amount: Number(event.target.value),
+                    })
+                  }
+                  placeholder="Enter amount"
+                />
+              </label>
+
+              <label className="projects-field">
+                Project association
+                <select
+                  value={form.projectId}
+                  onChange={(event) =>
+                    setForm({ ...form, projectId: event.target.value })
+                  }
+                >
+                  <option value="">Non-project income</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.projectName} — {project.client}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="projects-field">
+                Received through
+                <select
+                  value={form.method}
+                  onChange={(event) =>
+                    setForm({ ...form, method: event.target.value })
+                  }
+                >
+                  <option>Cash</option>
+                  <option>Bank transfer</option>
+                  <option>Mobile money</option>
+                  <option>Cheque</option>
+                </select>
+              </label>
+
+              <label className="projects-field field-wide">
+                Income description *
+                <input
+                  value={form.description}
+                  onChange={(event) =>
+                    setForm({ ...form, description: event.target.value })
+                  }
+                  placeholder="e.g. Interest income"
+                />
+              </label>
+
+              <label className="projects-field">
+                Payer / source
+                <input
+                  value={form.payer}
+                  onChange={(event) =>
+                    setForm({ ...form, payer: event.target.value })
+                  }
+                  placeholder="Name of payer or source"
+                />
+              </label>
+
+              <label className="projects-field">
+                Reference
+                <input
+                  value={form.reference}
+                  onChange={(event) =>
+                    setForm({ ...form, reference: event.target.value })
+                  }
+                  placeholder="Receipt or transaction reference"
+                />
+              </label>
             </div>
-          </div>
-        </form>
-      </section>
-    </div>}
-  </section>;
+
+            <div className="projects-form-actions">
+              <button
+                type="button"
+                className="projects-cancel"
+                onClick={closeForm}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={recordOtherIncome}
+              >
+                <Plus size={16} /> Save income
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </section>
+  );
 }
 
-function Metric({ title, value, note, icon, tone }: { title: string; value: string; note: string; icon: ReactNode; tone: 'green' | 'blue' | 'amber' | 'rose' }) {
+function Metric({
+  icon,
+  label,
+  value,
+  note,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  note: string;
+  tone: 'green' | 'blue' | 'amber' | 'rose' | 'violet';
+}) {
   return (
     <article className={`pj-kpi tone-${tone}`}>
-      <div className="pj-kpi-top"><span className="pj-kpi-icon" aria-hidden="true">{icon}</span><span className="pj-kpi-label">{title}</span></div>
+      <div className="pj-kpi-top">
+        <span className="pj-kpi-icon" aria-hidden="true">
+          {icon}
+        </span>
+        <span className="pj-kpi-label">{label}</span>
+      </div>
       <div className="pj-kpi-value">{value}</div>
       <div className="pj-kpi-note">{note}</div>
     </article>
+  );
+}
+
+function Empty({
+  icon,
+  title,
+  message,
+  action,
+}: {
+  icon: ReactNode;
+  title: string;
+  message: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="projects-empty">
+      <div className="projects-empty-icon">{icon}</div>
+      <h3>{title}</h3>
+      <p>{message}</p>
+      {action && (
+        <div className="projects-header-actions" style={{ justifyContent: 'center' }}>
+          {action}
+        </div>
+      )}
+    </div>
   );
 }
