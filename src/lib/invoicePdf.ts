@@ -45,25 +45,31 @@ const niceDate = (iso: string) => {
 const rwf = (n: number) => `RWF ${Math.round(Number.isFinite(n) ? n : 0).toLocaleString('en-US')}`;
 const safeName = (s: string) => s.replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 
-/** The green logo as a data URL, or null if it cannot be loaded (the PDF then uses the name in text). */
+/**
+ * The green logo, shrunk to print size (the original file is very large) and flattened onto white
+ * as a JPEG, so it adds only a few kilobytes to the PDF. Null if it cannot be loaded; the PDF then
+ * shows the company name in text instead.
+ */
 async function loadLogo(): Promise<{ data: string; ratio: number } | null> {
   try {
-    const res = await fetch(LOGO_URL);
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    const data = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(blob);
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('logo'));
+      el.src = LOGO_URL;
     });
-    const ratio = await new Promise<number>((resolve) => {
-      const img = new Image();
-      img.onload = () => resolve(img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 1.64);
-      img.onerror = () => resolve(1.64);
-      img.src = data;
-    });
-    return { data, ratio };
+    if (!img.naturalWidth || !img.naturalHeight) return null;
+    const ratio = img.naturalWidth / img.naturalHeight;
+    const width = 600; // about 400 dpi at the 36 mm the logo takes on the page
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = Math.round(width / ratio);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return { data: canvas.toDataURL('image/jpeg', 0.9), ratio };
   } catch {
     return null;
   }
@@ -71,7 +77,7 @@ async function loadLogo(): Promise<{ data: string; ratio: number } | null> {
 
 export async function downloadInvoicePdf(inv: InvoicePdfData): Promise<void> {
   const { jsPDF } = await import('jspdf');
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', compress: true });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
   const M = 18; // page margin
@@ -91,7 +97,7 @@ export async function downloadInvoicePdf(inv: InvoicePdfData): Promise<void> {
   let y = 14;
   if (logo) {
     const h = 20;
-    doc.addImage(logo.data, 'PNG', M, y, h * logo.ratio, h);
+    doc.addImage(logo.data, 'JPEG', M, y, h * logo.ratio, h);
   } else {
     font(18, 'bold', GREEN); doc.text('ISTA FORTIS', M, y + 9);
     font(8, 'normal', GREEN_DEEP); doc.text('G R O U P   L T D', M, y + 14);
