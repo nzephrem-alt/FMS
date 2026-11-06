@@ -22,6 +22,9 @@ export type InvoicePdfData = {
 
 const COMPANY = 'ISTA FORTIS Group Ltd';
 const COMPANY_EMAIL = 'fortisgroupltd1@gmail.com';
+const COMPANY_PHONES = '0782 291 551 / 0788 620 610';
+const COMPANY_TIN = '155740325';
+const BANK = { name: 'Bank of Kigali', account: '1002 6239 4063', holder: 'ISTA FORTIS GROUP Ltd' };
 const LOGO_URL = '/istafortis-green-logo.png';
 
 // Brand colours (RGB)
@@ -94,9 +97,12 @@ export async function downloadInvoicePdf(inv: InvoicePdfData): Promise<void> {
     font(18, 'bold', GREEN); doc.text('ISTA FORTIS', M, y + 9);
     font(8, 'normal', GREEN_DEEP); doc.text('G R O U P   L T D', M, y + 14);
   }
-  font(8.5, 'normal', MUTED);
+  font(8.5, 'bold', INK);
   doc.text(COMPANY, M, y + 26);
-  doc.text(COMPANY_EMAIL, M, y + 30.5);
+  font(8.5, 'normal', MUTED);
+  doc.text(`Email: ${COMPANY_EMAIL}`, M, y + 30.5);
+  doc.text(`Tel: ${COMPANY_PHONES}`, M, y + 35);
+  doc.text(`TIN: ${COMPANY_TIN}`, M, y + 39.5);
 
   font(26, 'bold', GREEN);
   doc.text('INVOICE', W - M, y + 8, { align: 'right' });
@@ -105,7 +111,7 @@ export async function downloadInvoicePdf(inv: InvoicePdfData): Promise<void> {
   font(9, 'normal', MUTED);
   doc.text(`Status: ${inv.status}`, W - M, y + 20.5, { align: 'right' });
 
-  y += 38;
+  y += 46;
   rule(y);
 
   /* ---------- bill to / details ---------- */
@@ -206,6 +212,25 @@ export async function downloadInvoicePdf(inv: InvoicePdfData): Promise<void> {
     y += 5.5 + noteLines.length * 5;
   }
 
+  /* ---------- how to pay ---------- */
+  if (y > H - 62) { doc.addPage(); y = M; }
+  y += 4;
+  const boxH = 26;
+  doc.setFillColor(TINT[0], TINT[1], TINT[2]);
+  doc.setDrawColor(GREEN[0], GREEN[1], GREEN[2]);
+  doc.setLineWidth(0.4);
+  doc.roundedRect(M, y, W - 2 * M, boxH, 2, 2, 'FD');
+  font(8, 'bold', GREEN_DEEP);
+  doc.text('PAYMENT DETAILS', M + 5, y + 7);
+  const bank: [string, string][] = [['Bank', BANK.name], ['Account number', BANK.account], ['Account name', BANK.holder]];
+  bank.forEach(([k, v], i) => {
+    font(9.5, 'normal', MUTED); doc.text(k, M + 5, y + 13.5 + i * 5);
+    font(9.5, 'bold', INK); doc.text(v, M + 42, y + 13.5 + i * 5);
+  });
+  font(8.5, 'normal', MUTED);
+  doc.text(`Please quote invoice No. ${inv.invoiceNumber}`, W - M - 5, y + 23.5, { align: 'right' });
+  y += boxH + 6;
+
   /* ---------- void mark ---------- */
   if (inv.voided) {
     font(90, 'bold', [240, 200, 205]);
@@ -220,7 +245,7 @@ export async function downloadInvoicePdf(inv: InvoicePdfData): Promise<void> {
     font(9.5, 'bold', GREEN_DEEP);
     doc.text('Thank you for your business.', M, H - 15);
     font(8.5, 'normal', MUTED);
-    doc.text(`${COMPANY} · ${COMPANY_EMAIL}`, M, H - 10.5);
+    doc.text(`${COMPANY} · ${COMPANY_EMAIL} · Tel: ${COMPANY_PHONES} · TIN: ${COMPANY_TIN}`, M, H - 10.5);
     if (pages > 1) doc.text(`Page ${i} of ${pages}`, W - M, H - 10.5, { align: 'right' });
   }
 
