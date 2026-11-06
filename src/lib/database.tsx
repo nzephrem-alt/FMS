@@ -700,6 +700,14 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [sections, setSections] = useState<SectionState[]>([]);
+  const [slow, setSlow] = useState(false);
+
+  // On a slow connection, say so after a while instead of showing only a spinner.
+  useEffect(() => {
+    if (ready || error) { setSlow(false); return; }
+    const timer = window.setTimeout(() => setSlow(true), 12000);
+    return () => window.clearTimeout(timer);
+  }, [ready, error, attempt]);
 
   useEffect(() => {
     if (access.loading) return;
@@ -719,11 +727,15 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
           live.clear();
           if (readQueue().length) throw new Error('Some changes made on this computer are not saved to the database yet. Check the internet connection and try again.');
         }
+        // Every table is fetched at the same time, so a slow connection waits once, not once per table.
+        const groups = [...byKey];
+        const fetched = await Promise.all(groups.map(([, specs]) => Promise.all(specs.map((spec) => fetchAll(spec.table)))));
+        if (!alive) return;
         const states: SectionState[] = [];
-        for (const [key, specs] of byKey) {
+        for (const [g, [key, specs]] of groups.entries()) {
           const main = specs[0];
           const raw = window.localStorage.getItem(key);
-          const loaded = await Promise.all(specs.map((spec) => fetchAll(spec.table)));
+          const loaded = fetched[g];
           const localCount = itemsOf(main, raw).length;
           if (access.isAdmin && !loaded[0].length && localCount) {
             // Not moved yet: keep using this computer's records until the Admin moves them.
@@ -737,11 +749,7 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
           });
           applying = true;
           try { window.localStorage.setItem(key, JSON.stringify(stored)); } finally { applying = false; }
-          for (const spec of specs) {
-            live.add(spec.table);
-            const fp = await fingerprint(spec.table);
-            if (fp) seen.set(spec.table, fp);
-          }
+          specs.forEach((spec) => live.add(spec.table));
           states.push({ table: main.table, label: main.label, inDatabase: true, onThisComputer: loaded[0].length });
         }
         if (!alive) return;
@@ -750,6 +758,8 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
         setStatus({ save: access.isAdmin ? 'saved' : 'readonly', message: '', newer: false });
         setSections(states);
         setReady(true);
+        // After the app is open: note each table's latest change, used to spot newer data later.
+        void Promise.all([...live].map(async (table) => { const fp = await fingerprint(table); if (fp) seen.set(table, fp); }));
       } catch (e) {
         if (!alive) return;
         setError(e instanceof Error ? friendly(e.message) : 'The records could not be loaded.');
@@ -818,7 +828,19 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
       </div>
     );
   }
-  if (!ready) return <div className="auth-gate" aria-busy="true" aria-label="Loading records"><div className="auth-spinner" /></div>;
+  if (!ready) {
+    return (
+      <div className="auth-gate" aria-busy="true" aria-label="Loading records">
+        <div style={{ display: 'grid', justifyItems: 'center', gap: 16, textAlign: 'center' }}>
+          <div className="auth-spinner" />
+          {slow && <>
+            <p style={{ margin: 0, maxWidth: 300, fontSize: 14, lineHeight: 1.6, color: '#3b4a42' }}>Still loading the records. This takes longer on a slow connection.</p>
+            <button type="button" style={btn} onClick={() => setAttempt((n) => n + 1)}>Try again</button>
+          </>}
+        </div>
+      </div>
+    );
+  }
   return <DbContext.Provider value={{ ready, sections, moveToDatabase }}>{children}</DbContext.Provider>;
 }
 
