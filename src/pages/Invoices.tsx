@@ -168,7 +168,7 @@ export default function Invoices() {
       setFormError('Check the invoice number, client, amount (whole RWF) and dates. The due date must be on or after the issue date.'); return;
     }
     const tin = form.clientTin.replace(/\s+/g, '');
-    if (!/^\d{9}$/.test(tin)) { setFormError("Enter the client's TIN: 9 digits."); return; }
+    if (tin && !/^\d{9}$/.test(tin)) { setFormError('A TIN has 9 digits. Correct it, or leave it empty if the client has no TIN.'); return; }
     const phone = form.clientPhone.trim();
     if (phone.replace(/\D/g, '').length < 10 || !/^\+?[\d\s-]+$/.test(phone)) { setFormError("Enter the client's contact phone, e.g. 0788 123 456 or +250 788 123 456."); return; }
     if (invoices.some(i => i.invoiceNumber.toLowerCase() === form.invoiceNumber.trim().toLowerCase())) {
@@ -306,8 +306,8 @@ export default function Invoices() {
                 </label>
                 {field('Client name', 'client', 'text', true)}
                 {field('Invoice amount (RWF)', 'amount', 'number', true)}
-                <label className="projects-field">Client TIN *
-                  <input inputMode="numeric" maxLength={11} required value={form.clientTin} onChange={e => updateForm('clientTin', e.target.value)} placeholder="9 digits" />
+                <label className="projects-field">Client TIN
+                  <input inputMode="numeric" maxLength={11} value={form.clientTin} onChange={e => updateForm('clientTin', e.target.value)} placeholder="9 digits, if the client has one" />
                 </label>
                 <label className="projects-field">Contact phone *
                   <input type="tel" required value={form.clientPhone} onChange={e => updateForm('clientPhone', e.target.value)} placeholder="e.g. 0788 123 456" />
