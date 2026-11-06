@@ -876,7 +876,7 @@ export function DatabaseStatus() {
   } else if (s.save === 'saving') {
     pill = <span className="db-pill busy" role="status"><Loader2 size={15} className="db-spin" /><span className="db-text">Saving…</span></span>;
   } else if (s.save === 'readonly') {
-    pill = <span className="db-pill view" title="You can view the records but not change them."><Eye size={15} /><span className="db-text">View only</span></span>;
+    pill = <span className="db-pill view" title="You can view the records but not change them."><Eye size={15} /><span className="db-text">View</span></span>;
   } else if (notMoved.length) {
     pill = <span className="db-pill local" title={`${notMoved.map((x) => x.label).join(', ')}: still only on this computer. Move them from Settings.`}><HardDrive size={15} /><span className="db-text">Not in database yet</span></span>;
   } else {
