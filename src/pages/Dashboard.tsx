@@ -216,7 +216,6 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
         <div>
           <div className="eyebrow">{dateLabel}</div>
           <h2>{greeting}</h2>
-          <p>Here is what is happening across your business today.</p>
         </div>
         <div className="dash-header-actions">
           <span className="dash-period"><CalendarDays size={15} /> Financial year {year}</span>
@@ -275,7 +274,6 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
               ) : (
                 <div className="dash-empty">No income or expenses recorded for {year} yet.<br />Issue an invoice or record a cost and it will appear here.</div>
               )}
-              <p className="dash-chart-note">Income is revenue earned (invoices issued and other income). Expenses are project costs, payroll and other recorded expenses. Hover a month for full amounts.</p>
             </div>
 
             <div className="dash-analysis">
@@ -330,7 +328,6 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
         <aside className="dash-rail" aria-label="Shortcuts and activity">
           <div className="dash-qa-card">
             <h3>Quick actions</h3>
-            <p>Common tasks</p>
             <div className="dash-qa-list">
               <button type="button" className="dash-qa" onClick={() => go('Client Invoices')}><span className="dash-qa-icon"><Plus size={16} /></span><span className="dash-qa-text"><strong>Record income</strong><small>Add a client payment</small></span><ArrowUpRight size={16} /></button>
               <button type="button" className="dash-qa" onClick={() => go('Project Costs')}><span className="dash-qa-icon"><ReceiptText size={16} /></span><span className="dash-qa-text"><strong>Record expense</strong><small>Capture a business cost</small></span><ArrowUpRight size={16} /></button>
@@ -340,7 +337,7 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
           </div>
 
           <div className="panel">
-            <div className="panel-heading"><div><h3>Needs attention</h3><p>Items to review</p></div></div>
+            <div className="panel-heading"><div><h3>Needs attention</h3></div></div>
             {shownAlerts.length === 0 ? (
               <div className="dash-attn-ok"><CheckCircle2 size={18} /> All clear. Nothing needs attention right now.</div>
             ) : (
@@ -360,7 +357,7 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
 
           <div className="panel">
             <div className="panel-heading">
-              <div><h3>Recent transactions</h3><p>Latest financial activity</p></div>
+              <div><h3>Recent transactions</h3></div>
               <button type="button" className="text-button" onClick={() => go('Transactions')}>See all <ArrowUpRight size={14} /></button>
             </div>
             {recent.length === 0 ? (
@@ -380,7 +377,6 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
         </aside>
       </div>
 
-      <p className="dash-source-note"><span className="demo-dot" /> Portfolio figures come from the Projects register plus client payments on invoices. Cash, income, expenses and balances come from the general ledger.</p>
     </div>
   );
 }
