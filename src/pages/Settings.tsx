@@ -233,7 +233,7 @@ export default function Settings() {
                 </div>
               </div>
               <button type="button" className="st-btn st-profile-out" onClick={() => void signOut(false)} disabled={signingOut}><LogOut size={16} /> Sign out</button>
-              {access.problem && <p className="st-msg warn st-profile-warn"><AlertTriangle size={16} /><span>Your profile could not be loaded, so you have view-only access. If you are the Admin, run the roles script in Supabase.</span></p>}
+              {access.problem && <p className="st-msg warn st-profile-warn"><AlertTriangle size={16} /><span>Your profile could not be loaded, so you have view access. If you are the Admin, run the roles script in Supabase.</span></p>}
             </>
           ) : (
             <p className="st-msg warn"><AlertTriangle size={16} /><span>Sign-in is not set up yet. Add the Supabase keys in Vercel.</span></p>
@@ -324,7 +324,7 @@ function teamError(message: string, code?: string): string {
 function inviteText(m: { email: string; full_name: string; role: Role }): string {
   const site = typeof window !== 'undefined' ? window.location.origin : '';
   const hello = m.full_name.trim() ? `Hello ${m.full_name.trim()},` : 'Hello,';
-  const access = m.role === 'admin' ? 'Admin access' : 'view-only access';
+  const access = m.role === 'admin' ? 'Admin access' : 'view access';
   return `${hello}\n\nYou have been given ${access} to the ISTA FORTIS Financial Management System.\n\n1. Open ${site}\n2. Choose "Create account" and use this email: ${m.email}\n3. Open the confirmation email we send you, then sign in.`;
 }
 
