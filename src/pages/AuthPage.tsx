@@ -37,9 +37,7 @@ const AUTH_CSS = `
 .auth-brand::before{width:420px;height:420px;right:-140px;top:-120px}
 .auth-brand::after{width:260px;height:260px;left:-90px;bottom:-90px}
 .auth-logo{position:relative;display:flex;align-items:center;gap:12px}
-.auth-logo-mark{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;background:#ffffff26}
-.auth-logo strong{display:block;font-size:19px;font-weight:800;letter-spacing:.8px}
-.auth-logo span{display:block;font-size:11px;letter-spacing:3px;opacity:.85;margin-top:2px}
+.auth-logo img{display:block;width:190px;max-width:60vw;height:auto}
 .auth-pitch{position:relative;max-width:440px}
 .auth-pitch h1{font-size:clamp(26px,2.6vw,36px);line-height:1.2;font-weight:700;margin:0 0 14px;letter-spacing:-.5px}
 .auth-pitch p{font-size:15px;line-height:1.6;margin:0;color:#e3f4ec}
@@ -91,20 +89,6 @@ const AUTH_CSS = `
 }
 @media(prefers-reduced-motion:reduce){.auth-input input{transition:none}}
 `;
-
-function LogoMark() {
-  return (
-    <svg width="28" height="28" viewBox="0 0 32 32" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 26 L16 12 L29 26" />
-      <path d="M8 26 L16 17.5 L24 26" />
-      <rect x="13.5" y="21" width="5" height="5" strokeWidth="1.5" />
-      <path d="M16 12 V6" />
-      <circle cx="16" cy="4.5" r="1.8" fill="#fff" stroke="none" />
-      <circle cx="7" cy="9" r="1.6" fill="#fff" stroke="none" />
-      <circle cx="25" cy="9" r="1.6" fill="#fff" stroke="none" />
-    </svg>
-  );
-}
 
 export default function AuthPage({ initialMode = 'signin', onPasswordUpdated }: { initialMode?: AuthMode; onPasswordUpdated?: () => void }) {
   const [mode, setMode] = useState<AuthMode>(initialMode);
@@ -180,8 +164,7 @@ export default function AuthPage({ initialMode = 'signin', onPasswordUpdated }: 
 
       <aside className="auth-brand">
         <div className="auth-logo">
-          <div className="auth-logo-mark"><LogoMark /></div>
-          <div><strong>ISTA FORTIS</strong><span>GROUP LTD</span></div>
+          <img src="/istafortis-white-logo.png" alt="ISTA FORTIS Group Ltd" />
         </div>
         <div className="auth-pitch">
           <h1>Financial Management System</h1>
