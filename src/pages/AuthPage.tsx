@@ -32,7 +32,8 @@ const AUTH_CSS = `
   min-height:100vh;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);background:#f6f8f6;color:var(--ink);font-family:'Poppins',sans-serif}
 .auth-page *{box-sizing:border-box}
 .auth-brand{position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;padding:48px clamp(28px,5vw,72px);
-  background:linear-gradient(150deg,#1a9e6f 0%,#0f7a53 55%,#0b3d2a 100%);color:#fff}
+  background:linear-gradient(150deg,#1a9e6f 0%,#0f7a53 55%,#0b3d2a 100%);color:#fff;
+  position:sticky;top:0;height:100vh;height:100dvh;align-self:start}
 .auth-brand::before,.auth-brand::after{content:"";position:absolute;border-radius:50%;background:#ffffff12;pointer-events:none}
 .auth-brand::before{width:420px;height:420px;right:-140px;top:-120px}
 .auth-brand::after{width:260px;height:260px;left:-90px;bottom:-90px}
@@ -79,7 +80,7 @@ const AUTH_CSS = `
 
 @media(max-width:900px){
   .auth-page{grid-template-columns:1fr}
-  .auth-brand{padding:28px 20px 30px;gap:18px}
+  .auth-brand{padding:28px 20px 30px;gap:18px;position:relative;height:auto}
   .auth-pitch h1{font-size:24px;margin-bottom:8px}
   .auth-pitch p{font-size:14px}
   .auth-points{display:none}
