@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
-  UserRound, KeyRound, LogOut, Database, ShieldCheck, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff,
+  Mail, Clock, KeyRound, LogOut, Database, ShieldCheck, AlertTriangle, CheckCircle2, Info, X, Eye, EyeOff,
   Users, UserPlus, Pencil, Trash2, Copy, Check, DatabaseZap,
 } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
@@ -10,6 +10,13 @@ import type { Role } from '../lib/access';
 import { useDatabase } from '../lib/database';
 
 const MIN_PASSWORD = 8;
+
+/** "Ephrem Nzayikorera" → "EN". */
+const initialsOf = (name: string) => {
+  const parts = name.split(/\s+/).filter(Boolean);
+  const letters = parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : (parts[0] ?? '').slice(0, 2);
+  return (letters || 'U').toUpperCase();
+};
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -33,6 +40,36 @@ const SETTINGS_CSS = `
 .st-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start}
 .st-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 1px 2px #1c2b2208;display:flex;flex-direction:column;gap:16px;min-width:0}
 .st-card.wide{grid-column:1/-1}
+
+/* profile */
+.st-profile{flex-direction:row;flex-wrap:wrap;align-items:center;gap:18px;padding:24px}
+.st-avatar{width:64px;height:64px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;background:linear-gradient(145deg,#1a9e6f,#0f7a53);color:#fff;font-size:22px;font-weight:700;letter-spacing:.5px;box-shadow:0 6px 16px #1a9e6f33}
+.st-who{flex:1;min-width:220px;display:flex;flex-direction:column;gap:6px}
+.st-who h3{margin:0;font-size:21px;font-weight:700;letter-spacing:-.2px}
+.st-who-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:#3b4a42;font-weight:500}
+.st-role{display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:999px;font-size:12px;font-weight:600}
+.st-role.admin{background:var(--lime);color:var(--lime-ink)}
+.st-role.viewer{background:#c9defb;color:#2f5a9c}
+.st-who-meta{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;color:var(--muted)}
+.st-who-meta span{display:inline-flex;align-items:center;gap:6px;overflow-wrap:anywhere}
+.st-profile-out{flex-shrink:0}
+.st-profile-warn{flex-basis:100%}
+
+/* password & security */
+.st-pw-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:14px;align-items:end}
+.st-pw-save{height:42px}
+.st-session{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding-top:16px;border-top:1px solid var(--line)}
+.st-session strong{display:block;font-size:14px;font-weight:600}
+.st-session span{display:block;margin-top:2px;font-size:13px;color:var(--muted)}
+.st-link-danger{display:inline-flex;align-items:center;gap:7px;border:0;background:none;padding:6px 0;font:inherit;font-size:13.5px;font-weight:600;color:#a63a49;cursor:pointer}
+.st-link-danger:hover{text-decoration:underline}
+.st-link-danger:disabled{opacity:.5;cursor:default}
+@media(max-width:760px){
+  .st-pw-row{grid-template-columns:1fr}
+  .st-pw-save{width:100%;justify-content:center}
+  .st-profile{padding:20px 16px}
+  .st-profile-out{width:100%;justify-content:center}
+}
 .st-head{display:flex;align-items:center;gap:12px}
 .st-icon{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;flex-shrink:0}
 .st-icon.green{background:#bdeed6;color:#1f6b46}.st-icon.blue{background:#c9defb;color:#2f5a9c}.st-icon.amber{background:#fde5c4;color:#8a5516}
@@ -179,42 +216,55 @@ export default function Settings() {
       </div>
 
       <div className="st-grid">
-        {/* ---------- account ---------- */}
-        <section className="st-card" aria-labelledby="st-account">
-          <Head icon={<UserRound size={19} />} tone="green" id="st-account" title="Account" sub="Who is signed in" />
+        {/* ---------- profile ---------- */}
+        <section className="st-card wide st-profile" aria-labelledby="st-account">
           {supabaseConfigured ? (
             <>
-              <div className="st-row"><span>Name</span><strong>{access.name}</strong></div>
-              <div className="st-row"><span>Title</span><strong>{access.title || '—'}</strong></div>
-              <div className="st-row"><span>Role</span><strong>{access.loading ? '…' : roleLabel(access.role)}</strong></div>
-              <div className="st-row"><span>Email</span><strong>{email || access.email || '—'}</strong></div>
-              {access.problem && <p className="st-msg warn"><AlertTriangle size={16} /><span>Your profile could not be loaded, so you have view-only access. If you are the Admin, run the roles script in Supabase.</span></p>}
-              <div className="st-row"><span>Last sign-in</span><strong>{when(lastSignIn || undefined)}</strong></div>
-              <div className="st-actions">
-                <button type="button" className="st-btn" onClick={() => void signOut(false)} disabled={signingOut}><LogOut size={16} /> Sign out</button>
-                <button type="button" className="st-btn danger" onClick={() => void signOut(true)} disabled={signingOut} title="Signs this account out on every phone and computer"><ShieldCheck size={16} /> Sign out everywhere</button>
+              <div className="st-avatar" aria-hidden="true">{initialsOf(access.name)}</div>
+              <div className="st-who">
+                <h3 id="st-account">{access.name}</h3>
+                <div className="st-who-line">
+                  {access.title && <span>{access.title}</span>}
+                  <span className={`st-role ${access.role}`}>{access.loading ? '…' : roleLabel(access.role)}</span>
+                </div>
+                <div className="st-who-meta">
+                  <span><Mail size={14} /> {email || access.email || '—'}</span>
+                  <span><Clock size={14} /> Last sign-in {when(lastSignIn || undefined)}</span>
+                </div>
               </div>
+              <button type="button" className="st-btn st-profile-out" onClick={() => void signOut(false)} disabled={signingOut}><LogOut size={16} /> Sign out</button>
+              {access.problem && <p className="st-msg warn st-profile-warn"><AlertTriangle size={16} /><span>Your profile could not be loaded, so you have view-only access. If you are the Admin, run the roles script in Supabase.</span></p>}
             </>
           ) : (
             <p className="st-msg warn"><AlertTriangle size={16} /><span>Sign-in is not set up yet. Add the Supabase keys in Vercel.</span></p>
           )}
         </section>
 
-        <section className="st-card" aria-labelledby="st-password">
-          <Head icon={<KeyRound size={19} />} tone="blue" id="st-password" title="Change password" sub={`At least ${MIN_PASSWORD} characters`} />
+        {/* ---------- password & security ---------- */}
+        <section className="st-card wide" aria-labelledby="st-password">
+          <Head icon={<KeyRound size={19} />} tone="blue" id="st-password" title="Password & security" sub={`Choose a new password of at least ${MIN_PASSWORD} characters`} />
           <form className="st-form" onSubmit={changePassword} noValidate>
-            <label className="st-field">New password
-              <span className="st-input">
-                <input type={showPw ? 'text' : 'password'} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} disabled={!supabaseConfigured} />
-                <button type="button" className="st-eye" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? 'Hide password' : 'Show password'}>{showPw ? <EyeOff size={17} /> : <Eye size={17} />}</button>
-              </span>
-            </label>
-            <label className="st-field">Confirm new password
-              <span className="st-input"><input type={showPw ? 'text' : 'password'} autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} disabled={!supabaseConfigured} /></span>
-            </label>
+            <div className="st-pw-row">
+              <label className="st-field">New password
+                <span className="st-input">
+                  <input type={showPw ? 'text' : 'password'} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} disabled={!supabaseConfigured} />
+                  <button type="button" className="st-eye" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? 'Hide password' : 'Show password'}>{showPw ? <EyeOff size={17} /> : <Eye size={17} />}</button>
+                </span>
+              </label>
+              <label className="st-field">Confirm new password
+                <span className="st-input"><input type={showPw ? 'text' : 'password'} autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} disabled={!supabaseConfigured} /></span>
+              </label>
+              <button type="submit" className="st-btn primary st-pw-save" disabled={pwBusy || !supabaseConfigured}><KeyRound size={16} /> {pwBusy ? 'Saving…' : 'Save password'}</button>
+            </div>
             {pwMsg && <p className={`st-msg ${pwMsg.kind}`} role={pwMsg.kind === 'error' ? 'alert' : 'status'}>{pwMsg.kind === 'ok' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}<span>{pwMsg.text}</span></p>}
-            <div className="st-actions"><button type="submit" className="st-btn primary" disabled={pwBusy || !supabaseConfigured}><KeyRound size={16} /> {pwBusy ? 'Saving…' : 'Save new password'}</button></div>
           </form>
+          <div className="st-session">
+            <div>
+              <strong>Sign out on all devices</strong>
+              <span>Use this if you signed in on a phone or computer you no longer use.</span>
+            </div>
+            <button type="button" className="st-link-danger" onClick={() => void signOut(true)} disabled={signingOut}><ShieldCheck size={15} /> Sign out everywhere</button>
+          </div>
         </section>
 
         {access.isAdmin && <TeamCard currentEmail={access.email} />}
