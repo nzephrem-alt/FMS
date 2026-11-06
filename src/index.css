@@ -474,3 +474,9 @@ button{cursor:pointer}
   .rep-table tr{break-inside:avoid}
   .rep-wide{min-width:0}
 }
+
+/* Phones: page headers stack in one column, left-aligned. (Each page's own styles bottom-align the
+   header row for computers, which on phones pushed the title to the right.) */
+@media (max-width: 600px) {
+  .projects-module .welcome-row.welcome-row { align-items: stretch; }
+}
