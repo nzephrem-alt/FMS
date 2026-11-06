@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { Plus, Search, Eye, CreditCard, X, FileText, Ban, HandCoins, Wallet, AlertTriangle } from 'lucide-react';
+import { Plus, Search, Eye, CreditCard, X, FileText, Ban, HandCoins, Wallet, AlertTriangle, Download } from 'lucide-react';
 import { postClientInvoice, postClientPayment, reverseClientInvoice, syncStoredInvoices } from '../lib/postings'; // LEDGER
 import { useAccess } from '../lib/access';
+import { downloadInvoicePdf } from '../lib/invoicePdf';
 
 type Project = { id: string; projectName: string; client: string };
 type Payment = { id: string; amount: number; date: string; method: string; reference: string; notes: string };
@@ -129,6 +130,15 @@ export default function Invoices() {
   const [payment, setPayment] = useState(blankPayment);
   const [formError, setFormError] = useState('');
   const [payError, setPayError] = useState('');
+  const [pdfBusy, setPdfBusy] = useState('');
+
+  /** Saves the invoice as a PDF file, ready to send to the client. */
+  const downloadPdf = async (invoice: Invoice) => {
+    setPdfBusy(invoice.id);
+    try { await downloadInvoicePdf({ ...invoice, status: statusOf(invoice) }); }
+    catch (e) { window.alert(errText(e, 'Could not create the PDF. Check the internet connection and try again.')); }
+    finally { setPdfBusy(''); }
+  };
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(invoices)); }, [invoices]);
 
@@ -275,6 +285,7 @@ export default function Invoices() {
                     <td>
                       <div className="project-row-actions">
                         <button type="button" title="View invoice" aria-label={`View invoice ${i.invoiceNumber}`} onClick={() => setView(i)}><Eye size={15} /></button>
+                        <button type="button" title="Download PDF" aria-label={`Download invoice ${i.invoiceNumber} as PDF`} onClick={() => { void downloadPdf(i); }} disabled={pdfBusy === i.id}><Download size={15} /></button>
                         {isAdmin && !i.voided && i.amount > received(i) && <button type="button" title="Record payment" aria-label={`Record payment for ${i.invoiceNumber}`} onClick={() => openPayment(i)}><CreditCard size={15} /></button>}
                       </div>
                     </td>
@@ -399,6 +410,7 @@ export default function Invoices() {
             <div className="projects-form-actions">
               {isAdmin && !view.voided && received(view) === 0 && <button type="button" className="projects-cancel inv-danger" onClick={() => voidInvoice(view)}><Ban size={15} /> Void invoice</button>}
               {isAdmin && !view.voided && view.amount > received(view) && <button type="button" className="primary-button" onClick={() => { openPayment(view); setView(null); }}><CreditCard size={15} /> Record payment</button>}
+              <button type="button" className="projects-cancel" onClick={() => { void downloadPdf(view); }} disabled={pdfBusy === view.id}><Download size={15} /> {pdfBusy === view.id ? 'Preparing…' : 'Download PDF'}</button>
               <button type="button" className="projects-cancel" onClick={() => setView(null)}>Close</button>
             </div>
           </section>
