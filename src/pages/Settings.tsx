@@ -111,6 +111,7 @@ const SETTINGS_CSS = `
 .st-member:first-child{border-top:0}
 .st-member-who strong{display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .st-member-who span{display:block;font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-member-who .st-member-seen{margin-top:3px;font-size:11.5px;color:#8a968f}
 .st-member-title{font-size:13.5px;color:#3b4a42;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .st-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
 .st-pill.admin{background:#c9defb;color:#2f5a9c}.st-pill.viewer{background:#eceff0;color:#4f5d55}
@@ -307,7 +308,7 @@ function Head({ icon, tone, id, title, sub }: { icon: ReactNode; tone: 'green' |
 
 /* ---------- team (Admins only) ---------- */
 
-type Member = { email: string; full_name: string | null; title: string | null; role: Role; added_at: string; has_account: boolean; active: boolean };
+type Member = { email: string; full_name: string | null; title: string | null; role: Role; added_at: string; has_account: boolean; active: boolean; last_sign_in?: string | null };
 type Draft = { email: string; full_name: string; title: string; role: Role };
 const emptyDraft: Draft = { email: '', full_name: '', title: '', role: 'viewer' };
 
@@ -436,10 +437,10 @@ function TeamCard({ currentEmail }: { currentEmail: string }) {
             const name = m.full_name?.trim() || m.email;
             return (
               <div className="st-member" key={m.email}>
-                <div className="st-member-who"><strong>{name}{self && ' (you)'}</strong><span>{m.email}</span></div>
+                <div className="st-member-who"><strong>{name}{self && ' (you)'}</strong><span>{m.email}</span>{m.has_account && <span className="st-member-seen">{m.last_sign_in ? `Last signed in ${when(m.last_sign_in)}` : 'Not signed in yet'}</span>}</div>
                 <div className="st-member-title">{m.title || '—'}</div>
                 <span className={`st-pill ${m.role}`}>{roleLabel(m.role)}</span>
-                <span className={`st-pill ${m.has_account ? 'active' : 'invited'}`} title={m.has_account ? 'Has created an account' : 'Approved, but has not created an account yet'}>{m.has_account ? 'Active' : 'Invited'}</span>
+                <span className={`st-pill ${m.has_account ? 'active' : 'invited'}`} title={m.has_account ? 'Has created an account' : 'Approved, but has not created an account yet'}>{m.has_account ? 'Joined' : 'Invited'}</span>
                 <div className="st-member-actions">
                   {!m.has_account && <button type="button" className="st-icon-btn" title="Copy invite message" aria-label={`Copy invite message for ${m.email}`} onClick={() => { setInvite(inviteText({ email: m.email, full_name: m.full_name ?? '', role: m.role })); setCopied(false); }}><Copy size={15} /></button>}
                   <button type="button" className="st-icon-btn" title="Edit" aria-label={`Edit ${m.email}`} onClick={() => startEdit(m)}><Pencil size={15} /></button>
