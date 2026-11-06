@@ -67,7 +67,7 @@ const SIDEBAR_CSS = `
 
 /* brand */
 .if-sidebar .brand{border-bottom:0}
-.if-sidebar .brand-logo{display:block;width:150px;max-width:100%;height:auto;margin:2px 0 0 6px}
+.if-sidebar .brand-logo{display:block;width:108px;max-width:100%;height:auto;margin:0 0 0 10px}
 .if-sidebar .brand-mark{
   width:40px;height:40px;border-radius:12px;display:grid;place-items:center;
   background:var(--brand);color:#fff;box-shadow:0 6px 14px #1a9e6f40;
