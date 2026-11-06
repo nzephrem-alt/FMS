@@ -452,7 +452,7 @@ export default function ProjectCosts() {
       <div>
         <div className="eyebrow">PROJECT FINANCIAL CONTROL</div>
         <h2>Project Cost Tracking</h2>
-        <p>Record, monitor and review expenditure across construction projects.</p>
+        <p>Costs and payments for every project.</p>
       </div>
       <div className="projects-header-actions">
         {isAdmin && <button className="projects-secondary-button" onClick={openImport} disabled={projects.length === 0} title={projects.length === 0 ? 'Register a project first' : undefined}><Upload size={16} /> <span>Import from Excel</span></button>}
@@ -465,13 +465,13 @@ export default function ProjectCosts() {
     <div className="pj-kpis">
       <Metric title="Total recorded costs" value={money(totals.total)} note={`${totals.count} cost record${totals.count === 1 ? '' : 's'}${site.days ? ` + ${site.days} site labour day${site.days === 1 ? '' : 's'}` : ''}`} icon={<TrendingDown size={13} />} tone="blue" />
       <Metric title="Amount paid" value={money(totals.paid)} note={totals.total > 0 ? `${paidPct}% of recorded costs disbursed` : 'Cash already disbursed'} icon={<Wallet size={13} />} tone="green" />
-      <Metric title="Outstanding payables" value={money(totals.payable)} note={site.total - site.paid > 0 ? `Includes ${money(site.total - site.paid)} site labour awaiting payment` : 'Recorded costs not yet paid'} icon={<Receipt size={13} />} tone="amber" />
+      <Metric title="Outstanding payables" value={money(totals.payable)} note={site.total - site.paid > 0 ? `${money(site.total - site.paid)} is site labour` : 'Recorded costs not yet paid'} icon={<Receipt size={13} />} tone="amber" />
       <Metric title="Projects with costs" value={String(totals.projectsWithCosts)} note={`Out of ${projects.length} registered project${projects.length === 1 ? '' : 's'}`} icon={<FolderKanban size={13} />} tone="blue" />
     </div>
 
     {byProject.length > 0 && <div className="panel projects-register">
       <div className="panel-heading projects-heading">
-        <div><h3>Cost by project</h3><p>Click a project to filter the register below.{site.days > 0 && ' Totals include site labour from the Site Labour page, paid and awaiting payment.'}</p></div>
+        <div><h3>Cost by project</h3></div>
       </div>
       <div className="projects-table-wrap">
         <table className="projects-table cost-by-project">
@@ -490,7 +490,7 @@ export default function ProjectCosts() {
 
     <div className="panel projects-register">
       <div className="panel-heading projects-heading">
-        <div><h3>Cost register</h3><p>{visibleRows.length} record{visibleRows.length === 1 ? '' : 's'} {showReversed ? 'reversed' : 'shown'} · Total {money(filteredTotal)}{!showReversed && labourDays.length > 0 && ' · Site labour shows one row per project per day'}</p></div>
+        <div><h3>Cost register</h3><p>{visibleRows.length} record{visibleRows.length === 1 ? '' : 's'} {showReversed ? 'reversed' : 'shown'} · Total {money(filteredTotal)}</p></div>
         <div className="cost-filters">
           <label className="projects-search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search costs..." /></label>
           <select value={projectFilter} onChange={e => setProjectFilter(e.target.value)} aria-label="Filter by project"><option value="All">All projects</option>{projects.map(p => <option key={p.id} value={p.id}>{p.projectName}</option>)}</select>
@@ -502,7 +502,7 @@ export default function ProjectCosts() {
       </div>
 
       {visibleRows.length === 0 ? (
-        <div className="projects-empty"><div className="projects-empty-icon"><Receipt size={24} /></div><h3>{showReversed ? 'No reversed costs' : hasAnyRecords ? 'No matching costs' : 'No project costs recorded yet'}</h3><p>{showReversed ? 'Reversed records will appear here.' : hasAnyRecords ? 'Try another search term or filter.' : !isAdmin ? 'Costs will appear here once the Admin records them.' : projects.length ? 'Record your first project cost, or import your existing costs from an Excel file.' : 'Register a project first. Costs must be assigned to a project.'}</p>{!showReversed && !costs.length && projects.length > 0 && isAdmin && <div className="projects-header-actions" style={{ justifyContent: 'center' }}><button className="projects-secondary-button" onClick={openImport}><Upload size={16} /> <span>Import from Excel</span></button><button className="primary-button" onClick={openForm}><Plus size={16} /> Record first cost</button></div>}</div>
+        <div className="projects-empty"><div className="projects-empty-icon"><Receipt size={24} /></div><h3>{showReversed ? 'No reversed costs' : hasAnyRecords ? 'No matching costs' : 'No project costs recorded yet'}</h3><p>{showReversed ? 'Reversed records will appear here.' : hasAnyRecords ? 'Try another search term or filter.' : !isAdmin ? 'Costs will appear here once the Admin records them.' : projects.length ? 'No costs yet.' : 'Register a project first. Costs must be assigned to a project.'}</p>{!showReversed && !costs.length && projects.length > 0 && isAdmin && <div className="projects-header-actions" style={{ justifyContent: 'center' }}><button className="projects-secondary-button" onClick={openImport}><Upload size={16} /> <span>Import from Excel</span></button><button className="primary-button" onClick={openForm}><Plus size={16} /> Record first cost</button></div>}</div>
       ) : (
         <div className="projects-table-wrap">
           <table className="projects-table">
@@ -643,7 +643,6 @@ export default function ProjectCosts() {
             </tr>)}</tbody>
           </table>
         </div>
-        <p className="cost-sub labour-day-note">Read only. Add workers, change rates or tick payments on the Site Labour page.</p>
         <div className="projects-form-actions"><button className="primary-button" onClick={() => setViewLabour(null)}>Close</button></div>
       </section>
     </div>}
