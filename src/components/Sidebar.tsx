@@ -67,6 +67,7 @@ const SIDEBAR_CSS = `
 
 /* brand */
 .if-sidebar .brand{border-bottom:0}
+.if-sidebar .brand-logo{display:block;width:150px;max-width:100%;height:auto;margin:2px 0 0 6px}
 .if-sidebar .brand-mark{
   width:40px;height:40px;border-radius:12px;display:grid;place-items:center;
   background:var(--brand);color:#fff;box-shadow:0 6px 14px #1a9e6f40;
@@ -124,21 +125,6 @@ const SIDEBAR_CSS = `
 @media(prefers-reduced-motion:reduce){.if-sidebar .nav-item,.if-sidebar .nav-item svg{transition:none}}
 `;
 
-/** Simplified version of the logo's roof, window and pin marks, drawn in white on the green tile. */
-function LogoMark() {
-  return (
-    <svg width="26" height="26" viewBox="0 0 32 32" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 26 L16 12 L29 26" />
-      <path d="M8 26 L16 17.5 L24 26" />
-      <rect x="13.5" y="21" width="5" height="5" strokeWidth="1.5" />
-      <path d="M16 12 V6" />
-      <circle cx="16" cy="4.5" r="1.8" fill="#fff" stroke="none" />
-      <circle cx="7" cy="9" r="1.6" fill="#fff" stroke="none" />
-      <circle cx="25" cy="9" r="1.6" fill="#fff" stroke="none" />
-    </svg>
-  );
-}
-
 function initialsOf(name: string): string {
   const parts = name.split(/\s+/).filter(Boolean);
   const letters = parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : (parts[0] ?? '').slice(0, 2);
@@ -183,14 +169,7 @@ function Sidebar({
 
       <aside className={`sidebar if-sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
         <div className="brand">
-          <div className="brand-mark" aria-label="ISTA FORTIS">
-            <LogoMark />
-          </div>
-
-          <div>
-            <div className="brand-name">ISTA FORTIS</div>
-            <div className="brand-caption">GROUP LTD</div>
-          </div>
+          <img className="brand-logo" src="/istafortis-green-logo.png" alt="ISTA FORTIS Group Ltd" />
 
           <button
             className="close-menu"
