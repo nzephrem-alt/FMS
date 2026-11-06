@@ -216,7 +216,28 @@ export async function downloadInvoicePdf(inv: InvoicePdfData): Promise<void> {
   });
   font(8.5, 'normal', MUTED);
   doc.text(`Please quote invoice No. ${inv.invoiceNumber}`, W - M - 5, y + 23.5, { align: 'right' });
-  y += boxH + 6;
+  y += boxH + 10;
+
+  /* ---------- thank you, place and date, and room to sign and stamp ---------- */
+  if (y > H - 78) { doc.addPage(); y = M; }
+  const FULL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const [iy, im, id] = inv.issueDate.split('-').map(Number);
+  const doneOn = iy && im >= 1 && im <= 12 && id ? `${String(id).padStart(2, '0')} ${FULL_MONTHS[im - 1]} ${iy}` : inv.issueDate;
+  font(10.5, 'bold', GREEN_DEEP);
+  doc.text('Thank you for your business.', M, y);
+  y += 9;
+  font(10, 'normal', INK);
+  doc.text(`Done at Kigali, on ${doneOn}`, M, y);
+  y += 6;
+  font(10, 'bold', INK);
+  doc.text('ISTA FORTIS GROUP Ltd', M, y);
+  y += 26; // space for the signature and stamp
+  doc.setDrawColor(MUTED[0], MUTED[1], MUTED[2]);
+  doc.setLineWidth(0.3);
+  doc.line(M, y, M + 70, y);
+  font(8.5, 'normal', MUTED);
+  doc.text('Signature and stamp', M, y + 4.5);
+  y += 10;
 
   /* ---------- void mark ---------- */
   if (inv.voided) {
@@ -228,9 +249,7 @@ export async function downloadInvoicePdf(inv: InvoicePdfData): Promise<void> {
   const pages = doc.getNumberOfPages();
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i);
-    rule(H - 22);
-    font(9.5, 'bold', GREEN_DEEP);
-    doc.text('Thank you for your business.', M, H - 15);
+    rule(H - 17);
     font(8.5, 'normal', MUTED);
     doc.text(`${COMPANY} · ${COMPANY_EMAIL} · Tel: ${COMPANY_PHONES} · TIN: ${COMPANY_TIN}`, M, H - 10.5);
     if (pages > 1) doc.text(`Page ${i} of ${pages}`, W - M, H - 10.5, { align: 'right' });
