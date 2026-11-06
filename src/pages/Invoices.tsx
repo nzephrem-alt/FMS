@@ -7,7 +7,7 @@ import { useAccess } from '../lib/access';
 type Project = { id: string; projectName: string; client: string };
 type Payment = { id: string; amount: number; date: string; method: string; reference: string; notes: string };
 type Invoice = {
-  id: string; invoiceNumber: string; projectId: string; projectName: string; client: string;
+  id: string; invoiceNumber: string; projectId: string; projectName: string; client: string; clientAddress?: string; clientTin?: string; clientPhone?: string;
   description: string; issueDate: string; dueDate: string; amount: number;
   payments: Payment[]; notes: string; voided: boolean; createdAt: string;
 };
@@ -35,7 +35,7 @@ const statusOf = (invoice: Invoice): Status => {
 const STATUS_CLASS: Record<Status, string> = {
   Paid: 'inv-paid', 'Partially paid': 'inv-partial', Unpaid: 'inv-unpaid', Overdue: 'inv-overdue', Void: 'inv-void',
 };
-const blankForm = () => ({ invoiceNumber: '', projectId: '', client: '', description: '', issueDate: today(), dueDate: '', amount: '', notes: '' });
+const blankForm = () => ({ invoiceNumber: '', projectId: '', client: '', clientAddress: '', clientTin: '', clientPhone: '', description: '', issueDate: today(), dueDate: '', amount: '', notes: '' });
 const blankPayment = () => ({ amount: '', date: today(), method: 'Bank transfer', reference: '', notes: '' });
 
 /**
@@ -150,7 +150,7 @@ export default function Invoices() {
   const filtered = invoices.filter(i => {
     const q = search.toLowerCase();
     return (filter === 'All' || statusOf(i) === filter) &&
-      [i.invoiceNumber, i.client, i.projectName, i.description].some(v => v.toLowerCase().includes(q));
+      [i.invoiceNumber, i.client, i.clientAddress ?? '', i.clientTin ?? '', i.clientPhone ?? '', i.projectName, i.description].some(v => v.toLowerCase().includes(q));
   });
   const updateForm = (key: keyof typeof form, value: string) => setForm(current => ({ ...current, [key]: value }));
   const updatePayment = (key: keyof typeof payment, value: string) => setPayment(current => ({ ...current, [key]: value }));
@@ -167,13 +167,17 @@ export default function Invoices() {
     if (!form.invoiceNumber.trim() || !form.client.trim() || !Number.isInteger(amount) || amount <= 0 || !form.dueDate || form.dueDate < form.issueDate) {
       setFormError('Check the invoice number, client, amount (whole RWF) and dates. The due date must be on or after the issue date.'); return;
     }
+    const tin = form.clientTin.replace(/\s+/g, '');
+    if (!/^\d{9}$/.test(tin)) { setFormError("Enter the client's TIN: 9 digits."); return; }
+    const phone = form.clientPhone.trim();
+    if (phone.replace(/\D/g, '').length < 10 || !/^\+?[\d\s-]+$/.test(phone)) { setFormError("Enter the client's contact phone, e.g. 0788 123 456 or +250 788 123 456."); return; }
     if (invoices.some(i => i.invoiceNumber.toLowerCase() === form.invoiceNumber.trim().toLowerCase())) {
       setFormError('That invoice number already exists.'); return;
     }
     const project = projects.find(p => p.id === form.projectId);
     const invoice: Invoice = {
       id: makeId(), invoiceNumber: form.invoiceNumber.trim(), projectId: form.projectId,
-      projectName: project?.projectName || 'General / Unassigned', client: form.client.trim(),
+      projectName: project?.projectName || 'General / Unassigned', client: form.client.trim(), clientAddress: form.clientAddress.trim(), clientTin: tin, clientPhone: phone,
       description: form.description.trim(), issueDate: form.issueDate, dueDate: form.dueDate,
       amount, payments: [], notes: form.notes.trim(), voided: false, createdAt: new Date().toISOString(),
     };
@@ -302,6 +306,15 @@ export default function Invoices() {
                 </label>
                 {field('Client name', 'client', 'text', true)}
                 {field('Invoice amount (RWF)', 'amount', 'number', true)}
+                <label className="projects-field">Client TIN *
+                  <input inputMode="numeric" maxLength={11} required value={form.clientTin} onChange={e => updateForm('clientTin', e.target.value)} placeholder="9 digits" />
+                </label>
+                <label className="projects-field">Contact phone *
+                  <input type="tel" required value={form.clientPhone} onChange={e => updateForm('clientPhone', e.target.value)} placeholder="e.g. 0788 123 456" />
+                </label>
+                <label className="projects-field field-wide">Client address
+                  <input value={form.clientAddress} onChange={e => updateForm('clientAddress', e.target.value)} placeholder="e.g. KG 11 Ave, Gasabo, Kigali" />
+                </label>
                 {field('Issue date', 'issueDate', 'date', true)}
                 {field('Due date', 'dueDate', 'date', true)}
                 <label className="projects-field field-wide">Description / work billed
@@ -362,6 +375,9 @@ export default function Invoices() {
             <span className={`inv-status ${STATUS_CLASS[statusOf(view)]}`}>{statusOf(view)}</span>
             <div className="project-detail-grid">
               <Detail label="Client" value={view.client} />
+              <Detail label="Client TIN" value={view.clientTin || '—'} />
+              <Detail label="Contact phone" value={view.clientPhone || '—'} />
+              <Detail label="Client address" value={view.clientAddress || '—'} />
               <Detail label="Project" value={view.projectName} />
               <Detail label="Issue date" value={view.issueDate} />
               <Detail label="Due date" value={view.dueDate} />
