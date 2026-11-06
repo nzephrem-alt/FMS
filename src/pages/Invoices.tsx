@@ -1,15 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { Plus, Search, Eye, CreditCard, X, FileText, Ban, HandCoins, Wallet, AlertTriangle, Download } from 'lucide-react';
+import { Plus, Search, Eye, CreditCard, X, FileText, Ban, HandCoins, Wallet, AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { postClientInvoice, postClientPayment, reverseClientInvoice, syncStoredInvoices } from '../lib/postings'; // LEDGER
 import { useAccess } from '../lib/access';
 import { downloadInvoicePdf } from '../lib/invoicePdf';
 
 type Project = { id: string; projectName: string; client: string };
 type Payment = { id: string; amount: number; date: string; method: string; reference: string; notes: string };
+type VatMode = 'exclusive' | 'inclusive' | 'none';
+type Item = { description: string; quantity: number; unitPrice: number };
 type Invoice = {
   id: string; invoiceNumber: string; projectId: string; projectName: string; client: string; clientAddress?: string; clientTin?: string; clientPhone?: string;
-  description: string; issueDate: string; dueDate: string; amount: number;
+  description: string; issueDate: string; dueDate: string;
+  amount: number;
+  items?: Item[];
+  /** Only a note on the invoice: whether the prices include VAT. No VAT is calculated. */
+  vatMode?: VatMode;
   payments: Payment[]; notes: string; voided: boolean; createdAt: string;
 };
 type Status = 'Unpaid' | 'Partially paid' | 'Paid' | 'Overdue' | 'Void';
@@ -36,7 +42,17 @@ const statusOf = (invoice: Invoice): Status => {
 const STATUS_CLASS: Record<Status, string> = {
   Paid: 'inv-paid', 'Partially paid': 'inv-partial', Unpaid: 'inv-unpaid', Overdue: 'inv-overdue', Void: 'inv-void',
 };
-const blankForm = () => ({ invoiceNumber: '', projectId: '', client: '', clientAddress: '', clientTin: '', clientPhone: '', description: '', issueDate: today(), dueDate: '', amount: '', notes: '' });
+type ItemRow = { description: string; quantity: string; unitPrice: string };
+const blankItem = (): ItemRow => ({ description: '', quantity: '1', unitPrice: '' });
+const blankForm = () => ({ invoiceNumber: '', projectId: '', client: '', clientAddress: '', clientTin: '', clientPhone: '', issueDate: today(), dueDate: '', notes: '', vatMode: 'exclusive' as VatMode, items: [blankItem()] });
+
+/* ---------- items and the VAT note ---------- */
+const VAT_LABEL: Record<VatMode, string> = { exclusive: 'VAT exclusive', inclusive: 'VAT inclusive', none: 'Not stated' };
+const lineTotal = (quantity: number, unitPrice: number) => Math.round(quantity * unitPrice);
+/** Older invoices had one amount and one description: they show as a single item without VAT. */
+const itemsOf = (inv: Invoice): Item[] =>
+  inv.items?.length ? inv.items : [{ description: inv.description || 'Works as agreed', quantity: 1, unitPrice: inv.amount }];
+const qtyText = (n: number) => (Number.isInteger(n) ? String(n) : String(+n.toFixed(2)));
 const blankPayment = () => ({ amount: '', date: today(), method: 'Bank transfer', reference: '', notes: '' });
 
 /**
@@ -110,6 +126,27 @@ const INVOICES_CSS = `
 .projects-module .inv-pay{display:flex;justify-content:space-between;gap:12px;padding:11px 14px;border-radius:12px;background:#f7faf9;margin-bottom:8px;font-size:12px}
 .projects-module .inv-pay strong{white-space:nowrap;font-variant-numeric:tabular-nums}
 .projects-module .inv-danger{color:#b04a58}
+.projects-module .inv-items{display:flex;flex-direction:column;gap:10px;padding:14px;border-radius:14px;background:#f7faf9}
+.projects-module .inv-items-head{font-size:12.5px;font-weight:600;color:#3b4a42}
+.projects-module .inv-item{display:grid;grid-template-columns:minmax(0,1fr) 80px 140px 120px 36px;gap:10px;align-items:end;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.projects-module .inv-item .projects-field input{background:#fff}
+.projects-module .inv-item-total{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);padding-bottom:11px}
+.projects-module .inv-item-total strong{font-size:13px;color:var(--ink);white-space:nowrap;font-variant-numeric:tabular-nums}
+.projects-module .inv-item-remove{height:40px;width:36px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:#fff;color:#a63a49;cursor:pointer}
+.projects-module .inv-item-remove:disabled{opacity:.35;cursor:default}
+.projects-module .inv-add-item{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border:1px dashed #b9d8c6;border-radius:10px;background:#fff;color:#1f6b46;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.projects-module .inv-add-item:hover{background:#eef8f2}
+.projects-module .inv-sums{display:flex;flex-direction:column;gap:6px;margin-left:auto;min-width:260px;font-size:12.5px}
+.projects-module .inv-sums div{display:flex;justify-content:space-between;gap:16px;color:var(--muted)}
+.projects-module .inv-sums strong{color:var(--ink);font-variant-numeric:tabular-nums}
+.projects-module .inv-sums .inv-sum-total{padding:9px 12px;border-radius:10px;background:var(--lime);color:var(--lime-ink);font-weight:700;font-size:13.5px}
+.projects-module .inv-sums .inv-sum-total strong{color:var(--lime-ink)}
+@media(max-width:640px){
+  .projects-module .inv-item{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px}
+  .projects-module .inv-item-desc{grid-column:1/-1}
+  .projects-module .inv-item-total{grid-column:1/3;flex-direction:row;justify-content:space-between;padding-bottom:0}
+  .projects-module .inv-sums{min-width:0;width:100%}
+}
 
 @media(max-width:1100px){.pj-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:420px){.pj-kpis{grid-template-columns:1fr}}
@@ -135,7 +172,7 @@ export default function Invoices() {
   /** Saves the invoice as a PDF file, ready to send to the client. */
   const downloadPdf = async (invoice: Invoice) => {
     setPdfBusy(invoice.id);
-    try { await downloadInvoicePdf({ ...invoice, status: statusOf(invoice) }); }
+    try { await downloadInvoicePdf({ ...invoice, items: itemsOf(invoice), vatMode: invoice.vatMode ?? 'none' }); }
     catch (e) { window.alert(errText(e, 'Could not create the PDF. Check the internet connection and try again.')); }
     finally { setPdfBusy(''); }
   };
@@ -162,7 +199,11 @@ export default function Invoices() {
     return (filter === 'All' || statusOf(i) === filter) &&
       [i.invoiceNumber, i.client, i.clientAddress ?? '', i.clientTin ?? '', i.clientPhone ?? '', i.projectName, i.description].some(v => v.toLowerCase().includes(q));
   });
-  const updateForm = (key: keyof typeof form, value: string) => setForm(current => ({ ...current, [key]: value }));
+  const updateForm = (key: 'invoiceNumber' | 'client' | 'clientAddress' | 'clientTin' | 'clientPhone' | 'issueDate' | 'dueDate' | 'notes', value: string) => setForm(current => ({ ...current, [key]: value }));
+  const setItem = (n: number, key: keyof ItemRow, value: string) => setForm(current => ({ ...current, items: current.items.map((r, i) => (i === n ? { ...r, [key]: value } : r)) }));
+  const addItem = () => setForm(current => ({ ...current, items: [...current.items, blankItem()] }));
+  const removeItem = (n: number) => setForm(current => ({ ...current, items: current.items.length > 1 ? current.items.filter((_, i) => i !== n) : current.items }));
+  const formTotal = form.items.reduce((s, r) => s + lineTotal(Number(r.quantity) || 0, Number(r.unitPrice) || 0), 0);
   const updatePayment = (key: keyof typeof payment, value: string) => setPayment(current => ({ ...current, [key]: value }));
 
   const openForm = () => { setFormError(''); setFormOpen(true); };
@@ -173,10 +214,20 @@ export default function Invoices() {
   function createInvoice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError('');
-    const amount = Number(form.amount);
-    if (!form.invoiceNumber.trim() || !form.client.trim() || !Number.isInteger(amount) || amount <= 0 || !form.dueDate || form.dueDate < form.issueDate) {
-      setFormError('Check the invoice number, client, amount (whole RWF) and dates. The due date must be on or after the issue date.'); return;
+    if (!form.invoiceNumber.trim() || !form.client.trim() || !form.dueDate || form.dueDate < form.issueDate) {
+      setFormError('Check the invoice number, client and dates. The due date must be on or after the issue date.'); return;
     }
+    const rows = form.items.filter(r => r.description.trim() || r.unitPrice);
+    if (!rows.length) { setFormError('Add at least one item with a description and a price.'); return; }
+    const items: Item[] = [];
+    for (const [n, r] of rows.entries()) {
+      const quantity = Number(r.quantity); const unitPrice = Number(r.unitPrice);
+      if (!r.description.trim()) { setFormError(`Item ${n + 1}: enter a description.`); return; }
+      if (!(quantity > 0)) { setFormError(`Item ${n + 1}: the quantity must be more than zero.`); return; }
+      if (!Number.isInteger(unitPrice) || unitPrice <= 0) { setFormError(`Item ${n + 1}: enter the unit price in whole RWF.`); return; }
+      items.push({ description: r.description.trim(), quantity, unitPrice });
+    }
+    const amount = items.reduce((s, it) => s + lineTotal(it.quantity, it.unitPrice), 0);
     const tin = form.clientTin.replace(/\s+/g, '');
     if (tin && !/^\d{9}$/.test(tin)) { setFormError('A TIN has 9 digits. Correct it, or leave it empty if the client has no TIN.'); return; }
     const phone = form.clientPhone.trim();
@@ -188,8 +239,8 @@ export default function Invoices() {
     const invoice: Invoice = {
       id: makeId(), invoiceNumber: form.invoiceNumber.trim(), projectId: form.projectId,
       projectName: project?.projectName || 'General / Unassigned', client: form.client.trim(), clientAddress: form.clientAddress.trim(), clientTin: tin, clientPhone: phone,
-      description: form.description.trim(), issueDate: form.issueDate, dueDate: form.dueDate,
-      amount, payments: [], notes: form.notes.trim(), voided: false, createdAt: new Date().toISOString(),
+      description: items.map(it => it.description).join('; '), issueDate: form.issueDate, dueDate: form.dueDate,
+      amount, items, vatMode: form.vatMode, payments: [], notes: form.notes.trim(), voided: false, createdAt: new Date().toISOString(),
     };
     // LEDGER: post first, so an invoice is never saved without its journal entry
     try { postClientInvoice(invoice); }
@@ -220,7 +271,7 @@ export default function Invoices() {
     setInvoices(current => current.map(i => i.id === invoice.id ? { ...i, voided: true } : i)); setView(null);
   }
 
-  const field = (label: string, key: keyof typeof form, type = 'text', required = false) => (
+  const field = (label: string, key: 'invoiceNumber' | 'client' | 'issueDate' | 'dueDate', type = 'text', required = false) => (
     <label className="projects-field">{label}{required ? ' *' : ''}
       <input type={type} required={required} value={form[key]} onChange={e => updateForm(key, e.target.value)} />
     </label>
@@ -316,7 +367,11 @@ export default function Invoices() {
                   </select>
                 </label>
                 {field('Client name', 'client', 'text', true)}
-                {field('Invoice amount (RWF)', 'amount', 'number', true)}
+                <label className="projects-field">VAT
+                  <select value={form.vatMode} onChange={e => setForm(current => ({ ...current, vatMode: e.target.value as VatMode }))}>
+                    {(['exclusive', 'inclusive'] as VatMode[]).map(m => <option key={m} value={m}>{VAT_LABEL[m]}</option>)}
+                  </select>
+                </label>
                 <label className="projects-field">Client TIN
                   <input inputMode="numeric" maxLength={11} value={form.clientTin} onChange={e => updateForm('clientTin', e.target.value)} placeholder="9 digits, if the client has one" />
                 </label>
@@ -328,9 +383,29 @@ export default function Invoices() {
                 </label>
                 {field('Issue date', 'issueDate', 'date', true)}
                 {field('Due date', 'dueDate', 'date', true)}
-                <label className="projects-field field-wide">Description / work billed
-                  <textarea rows={3} value={form.description} onChange={e => updateForm('description', e.target.value)} />
-                </label>
+                <div className="field-wide inv-items">
+                  <div className="inv-items-head"><span>Items *</span></div>
+                  {form.items.map((r, n) => (
+                    <div className="inv-item" key={n}>
+                      <label className="projects-field inv-item-desc">Description
+                        <input value={r.description} onChange={e => setItem(n, 'description', e.target.value)} placeholder="e.g. Excavation works" />
+                      </label>
+                      <label className="projects-field inv-item-qty">Qty
+                        <input type="number" min="0" step="any" value={r.quantity} onChange={e => setItem(n, 'quantity', e.target.value)} />
+                      </label>
+                      <label className="projects-field inv-item-price">Unit price (RWF)
+                        <input type="number" min="0" step="1" value={r.unitPrice} onChange={e => setItem(n, 'unitPrice', e.target.value)} />
+                      </label>
+                      <div className="inv-item-total"><span>Amount</span><strong>{money(lineTotal(Number(r.quantity) || 0, Number(r.unitPrice) || 0))}</strong></div>
+                      <button type="button" className="inv-item-remove" onClick={() => removeItem(n)} disabled={form.items.length === 1} aria-label={`Remove item ${n + 1}`} title="Remove item"><Trash2 size={15} /></button>
+                    </div>
+                  ))}
+                  <button type="button" className="inv-add-item" onClick={addItem}><Plus size={15} /> Add item</button>
+                  <div className="inv-sums">
+                    <div className="inv-sum-total"><span>Total</span><strong>{money(formTotal)}</strong></div>
+                    <div><span>Prices are {form.vatMode === 'inclusive' ? 'VAT inclusive' : 'VAT exclusive'}</span></div>
+                  </div>
+                </div>
                 <label className="projects-field field-wide">Notes
                   <textarea rows={2} value={form.notes} onChange={e => updateForm('notes', e.target.value)} />
                 </label>
@@ -393,11 +468,17 @@ export default function Invoices() {
               <Detail label="Issue date" value={view.issueDate} />
               <Detail label="Due date" value={view.dueDate} />
               <Detail label="Invoice amount" value={money(view.amount)} />
+              <Detail label="VAT" value={VAT_LABEL[view.vatMode ?? 'none']} />
               <Detail label="Received" value={money(received(view))} />
               <Detail label="Outstanding" value={money(view.voided ? 0 : view.amount - received(view))} />
             </div>
-            <h4 className="inv-section-title">Description</h4>
-            <p className="inv-text">{view.description || 'No description provided.'}</p>
+            <h4 className="inv-section-title">Items</h4>
+            {itemsOf(view).map((it, n) => (
+              <div key={n} className="inv-pay">
+                <span>{it.description}{it.quantity !== 1 ? ` · ${qtyText(it.quantity)} × ${money(it.unitPrice)}` : ''}</span>
+                <strong>{money(lineTotal(it.quantity, it.unitPrice))}</strong>
+              </div>
+            ))}
             <h4 className="inv-section-title">Payment history ({view.payments.length})</h4>
             {view.payments.length === 0
               ? <p className="inv-text">No payments recorded.</p>
