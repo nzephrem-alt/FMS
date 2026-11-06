@@ -616,7 +616,7 @@ export default function SiteLabour() {
             </table>
           </div>
         )}
-        {workers.length > 0 && <p className="sl-foot-note">A paid day is recorded as a labour cost on the work date and as money paid on the payment date. Removing a payment posts reversing entries, so the history stays complete.</p>}
+        
       </div>
 
       {/* ---------- day editor ---------- */}
