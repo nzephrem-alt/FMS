@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   Plus, Search, X, RotateCcw, Receipt, Wallet, TrendingDown, Eye, Ban,
-  Upload, Download, FileSpreadsheet, FolderKanban, CheckCircle2, Clock3, CircleDashed,
+  Upload, Download, FileSpreadsheet, FolderKanban, CheckCircle2, Clock3, CircleDashed, CreditCard, Undo2,
 } from 'lucide-react';
-import { postProjectCost, reverseProjectCost } from '../lib/postings'; // LEDGER
-import { auditLog } from '../lib/ledger';
+import { postCostPayment, postProjectCost, reverseProjectCost } from '../lib/postings'; // LEDGER
+import { auditLog, ledger } from '../lib/ledger';
+import type { JournalEntry } from '../lib/ledger';
 import { LABOUR_TYPES, buildCostPreview, downloadCostTemplate, readCostFile } from '../lib/costImport';
 import type { ImportOptions, ImportSheet, PaymentMethod as ImportMethod } from '../lib/costImport';
 import { useAccess } from '../lib/access';
@@ -75,6 +76,30 @@ function statusIcon(cost: ProjectCost) {
  * Page styles live here so this page is a single file. They mirror the Projects page and are
  * scoped under .projects-module, so they restyle this page (and its pop-ups) only.
  */
+/* ---------- later payments of a cost (read from the ledger) ---------- */
+type CostPayment = { entryId: string; date: string; amount: number; method: string; reference: string };
+const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const payMethods: PaymentMethod[] = ['Cash', 'Bank transfer', 'Mobile money', 'Cheque'];
+const blankPay = () => ({ amount: '', date: localToday(), method: 'Bank transfer' as PaymentMethod, reference: '' });
+
+/** Payments made after a cost was recorded. Undone payments are left out. */
+function laterPayments(costId: string): CostPayment[] {
+  const entries: readonly JournalEntry[] = ledger.getEntries();
+  const undone = new Set(entries.filter(e => e.reversalOf).map(e => e.reversalOf as string));
+  return entries
+    .filter(e => e.sourceType === 'cost_payment' && e.sourceId === costId && !e.reversalOf && !undone.has(e.id))
+    .map(e => ({
+      entryId: e.id,
+      date: e.date,
+      amount: e.lines.reduce((s, l) => s + l.debit, 0),
+      method: e.lines.find(l => l.credit > 0)?.memo || '—',
+      reference: e.reference || '',
+    }));
+}
+/** Next payment number for a cost, counting undone payments too, so every posting stays unique. */
+const nextPaymentNo = (costId: string) =>
+  ledger.getEntries().filter(e => e.sourceType === 'cost_payment' && e.sourceId === costId && !e.reversalOf).length + 1;
+
 const COSTS_CSS = `
 .projects-module{--lime:#d5f56b;--lime-ink:#1d2b12;--ink:#1c2b22;--muted:#7d8a83;--line:#edf0f1;display:flex;flex-direction:column;gap:22px;color:var(--ink)}
 .projects-module button:focus-visible{outline:2px solid #2f8f6b;outline-offset:2px}
@@ -117,6 +142,15 @@ const COSTS_CSS = `
 .projects-module .cost-by-project tbody tr{cursor:pointer}
 .projects-module .cost-by-project tbody tr.is-selected{background:#eef8f2}
 .projects-module .cost-sub{display:block;margin-top:3px;font-size:10.5px;color:var(--muted)}
+.projects-module .cost-pay-title{font-size:13px;font-weight:600;margin:18px 0 8px;color:var(--ink)}
+.projects-module .cost-pay{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border-radius:12px;background:#f7faf9;margin-bottom:8px;font-size:12px}
+.projects-module .cost-pay-info{min-width:0}
+.projects-module .cost-pay-info span{display:block;font-size:10.5px;color:var(--muted);margin-top:2px}
+.projects-module .cost-pay-end{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.projects-module .cost-pay-end strong{white-space:nowrap;font-variant-numeric:tabular-nums}
+.projects-module .cost-undo{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:#fff;border-radius:9px;padding:5px 9px;font:inherit;font-size:11.5px;font-weight:600;color:#a63a49;cursor:pointer}
+.projects-module .cost-undo:hover{background:#fdf0f2}
+.projects-module .cost-pay-due{margin:0 0 14px;padding:12px 14px;border-radius:12px;background:#fde5c4;color:#8a5517;font-size:13px;font-weight:600}
 .projects-module .projects-table tr.is-labour-day td:first-child{box-shadow:inset 3px 0 0 #6fd6a0}
 .projects-module .labour-day-table{margin-top:14px;border:1px solid var(--line);border-radius:12px;overflow-x:auto}
 .projects-module .labour-day-note{margin:10px 0 0}
@@ -177,6 +211,9 @@ export default function ProjectCosts() {
   const [period, setPeriod] = useState('All');
   const [showReversed, setShowReversed] = useState(false);
   const [viewCost, setViewCost] = useState<ProjectCost | null>(null);
+  const [payFor, setPayFor] = useState<ProjectCost | null>(null);
+  const [pay, setPay] = useState(blankPay);
+  const [payError, setPayError] = useState('');
   const [error, setError] = useState('');
 
   // Excel import
@@ -325,6 +362,35 @@ export default function ProjectCosts() {
     setViewCost(null);
   };
 
+  /* ---------- paying a balance later, and undoing a payment ---------- */
+  const openPay = (cost: ProjectCost) => { setPay({ ...blankPay(), amount: String(cost.amount - cost.amountPaid) }); setPayError(''); setPayFor(cost); };
+  const closePay = () => { setPayFor(null); setPayError(''); };
+  const applyPaid = (costId: string, change: number) => {
+    setCosts(old => old.map(c => c.id === costId ? { ...c, amountPaid: c.amountPaid + change } : c));
+    setViewCost(v => (v && v.id === costId ? { ...v, amountPaid: v.amountPaid + change } : v));
+  };
+  const savePayment = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); if (!payFor) return; setPayError('');
+    const amount = Number(pay.amount); const balance = payFor.amount - payFor.amountPaid;
+    if (!Number.isInteger(amount) || amount <= 0 || amount > balance) { setPayError(`Enter a whole RWF amount greater than zero and no more than ${money(balance)}.`); return; }
+    if (!pay.date) { setPayError('Choose the date the payment was made.'); return; }
+    // LEDGER: post first, so the cost is never marked paid without its journal entry
+    try {
+      postCostPayment({ costId: payFor.id, paymentNo: nextPaymentNo(payFor.id), date: pay.date, supplier: payFor.supplier, amount, method: pay.method, reference: pay.reference.trim() || undefined });
+    } catch (e) { setPayError(e instanceof Error ? e.message : 'Could not post the payment to the ledger.'); return; }
+    applyPaid(payFor.id, amount);
+    setNotice(`Payment of ${money(amount)} recorded for ${payFor.id}.`);
+    closePay();
+  };
+  const undoPayment = (cost: ProjectCost, p: CostPayment) => {
+    if (!window.confirm(`Undo the payment of ${money(p.amount)} made on ${p.date}? A reversing entry is posted and the amount becomes due again.`)) return;
+    // LEDGER: reverse on the payment's own date, so each period stays correct
+    try { ledger.reverse(p.entryId, `Payment for ${cost.id} undone`, p.date); }
+    catch (e) { window.alert(e instanceof Error ? e.message : 'Could not undo the payment in the ledger.'); return; }
+    applyPaid(cost.id, -p.amount);
+    setNotice(`Payment of ${money(p.amount)} for ${cost.id} undone.`);
+  };
+
   /* ---------- Excel import ---------- */
   const resetImport = () => {
     setImportSheets(null); setSheetIndex(0); setImportFileName(''); setImportError('');
@@ -469,7 +535,7 @@ export default function ProjectCosts() {
                 <td><div className="received-cell"><strong>{money(c.amountPaid)}</strong><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><small>{progress.toFixed(0)}% paid</small></div></td>
                 <td className="money-cell">{money(due)}</td>
                 <td><span className={`project-status ${statusClass(c)}`}>{statusIcon(c)}{c.reversed ? 'Reversed' : paymentStatusOf(c)}</span></td>
-                <td><div className="project-row-actions"><button aria-label={`View ${c.id}`} title="View details" onClick={() => setViewCost(c)}><Eye size={15} /></button></div></td>
+                <td><div className="project-row-actions"><button aria-label={`View ${c.id}`} title="View details" onClick={() => setViewCost(c)}><Eye size={15} /></button>{isAdmin && !c.reversed && due > 0 && <button aria-label={`Record payment for ${c.id}`} title="Record payment" onClick={() => openPay(c)}><CreditCard size={15} /></button>}</div></td>
               </tr>;
             })}</tbody>
           </table>
@@ -514,11 +580,45 @@ export default function ProjectCosts() {
           <Detail label="Payment method" value={viewCost.paymentMethod} /><Detail label="Reference" value={viewCost.reference || '—'} />
         </div>
         {viewCost.notes && <div className="project-detail-notes"><strong>Notes</strong><p>{viewCost.notes}</p></div>}
+        {(() => {
+          const later = laterPayments(viewCost.id);
+          const atRecording = viewCost.amountPaid - later.reduce((s, p) => s + p.amount, 0);
+          if (!later.length && atRecording <= 0) return null;
+          return <>
+            <h4 className="cost-pay-title">Payments</h4>
+            {atRecording > 0 && <div className="cost-pay"><div className="cost-pay-info"><strong>Paid when recorded</strong><span>{viewCost.date} · {viewCost.paymentMethod}</span></div><div className="cost-pay-end"><strong>{money(atRecording)}</strong></div></div>}
+            {later.map(p => <div className="cost-pay" key={p.entryId}>
+              <div className="cost-pay-info"><strong>Payment</strong><span>{p.date} · {p.method}{p.reference ? ` · ${p.reference}` : ''}</span></div>
+              <div className="cost-pay-end"><strong>{money(p.amount)}</strong>{isAdmin && !viewCost.reversed && <button type="button" className="cost-undo" onClick={() => undoPayment(viewCost, p)} aria-label={`Undo payment of ${money(p.amount)} on ${p.date}`}><Undo2 size={13} /> Undo</button>}</div>
+            </div>)}
+          </>;
+        })()}
         {viewCost.reversed && <p className="projects-validation">Reversed on {viewCost.reversedAt ? new Date(viewCost.reversedAt).toLocaleString() : '—'}</p>}
         <div className="projects-form-actions">
           {!viewCost.reversed && isAdmin && <button className="projects-cancel" onClick={() => reverseCost(viewCost)}><Ban size={14} /> Reverse record</button>}
+          {!viewCost.reversed && isAdmin && viewCost.amount > viewCost.amountPaid && <button className="projects-cancel" onClick={() => { openPay(viewCost); setViewCost(null); }}><CreditCard size={14} /> Record payment</button>}
           <button className="primary-button" onClick={() => setViewCost(null)}>Close</button>
         </div>
+      </section>
+    </div>}
+
+    {payFor && isAdmin && <div className="projects-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) closePay(); }}>
+      <section className="projects-modal" role="dialog" aria-modal="true" aria-labelledby="cost-pay-title">
+        <div className="projects-modal-header"><div><div className="eyebrow">{payFor.id} · {payFor.supplier || payFor.projectName}</div><h3 id="cost-pay-title">Record payment</h3></div><button className="projects-close" onClick={closePay} aria-label="Close"><X size={19} /></button></div>
+        <p className="cost-pay-due">Balance due: {money(payFor.amount - payFor.amountPaid)} of {money(payFor.amount)}</p>
+        {payError && <p className="projects-validation" role="alert">{payError}</p>}
+        <form onSubmit={savePayment} noValidate>
+          <div className="projects-form-grid">
+            <label className="projects-field">Amount paid (RWF) *<input type="number" min="1" step="1" value={pay.amount} onChange={e => setPay(p => ({ ...p, amount: e.target.value }))} /></label>
+            <label className="projects-field">Payment date *<input type="date" value={pay.date} onChange={e => setPay(p => ({ ...p, date: e.target.value }))} /></label>
+            <label className="projects-field">Paid through<select value={pay.method} onChange={e => setPay(p => ({ ...p, method: e.target.value as PaymentMethod }))}>{payMethods.map(m => <option key={m}>{m}</option>)}</select></label>
+            <label className="projects-field">Reference<input value={pay.reference} onChange={e => setPay(p => ({ ...p, reference: e.target.value }))} placeholder="Receipt or transaction reference" /></label>
+          </div>
+          <div className="projects-form-actions">
+            <button type="button" className="projects-cancel" onClick={closePay}>Cancel</button>
+            <button type="submit" className="primary-button"><CreditCard size={15} /> Save payment</button>
+          </div>
+        </form>
       </section>
     </div>}
 
