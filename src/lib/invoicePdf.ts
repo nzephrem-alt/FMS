@@ -14,10 +14,11 @@ export type InvoicePdfData = {
   issueDate: string;
   dueDate: string;
   amount: number;
-  payments: { amount: number; date: string; method: string; reference: string }[];
+  items: { description: string; quantity: number; unitPrice: number }[];
+  /** Shown as a note under the items: whether the prices include VAT. */
+  vatMode: 'exclusive' | 'inclusive' | 'none';
   notes: string;
   voided: boolean;
-  status: string;
 };
 
 const COMPANY = 'ISTA FORTIS Group Ltd';
@@ -74,8 +75,6 @@ export async function downloadInvoicePdf(inv: InvoicePdfData): Promise<void> {
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
   const M = 18; // page margin
-  const received = inv.payments.reduce((s, p) => s + p.amount, 0);
-  const balance = inv.voided ? 0 : inv.amount - received;
 
   const font = (size: number, style: 'normal' | 'bold' = 'normal', color: [number, number, number] = INK) => {
     doc.setFont('helvetica', style);
@@ -108,8 +107,6 @@ export async function downloadInvoicePdf(inv: InvoicePdfData): Promise<void> {
   doc.text('INVOICE', W - M, y + 8, { align: 'right' });
   font(10.5, 'bold', INK);
   doc.text(`No. ${inv.invoiceNumber}`, W - M, y + 15, { align: 'right' });
-  font(9, 'normal', MUTED);
-  doc.text(`Status: ${inv.status}`, W - M, y + 20.5, { align: 'right' });
 
   y += 46;
   rule(y);
@@ -149,57 +146,49 @@ export async function downloadInvoicePdf(inv: InvoicePdfData): Promise<void> {
   y = Math.max(ly, ry) + 6;
 
   /* ---------- items table ---------- */
+  const cQty = W - M - 82;   // right edge of the Qty column
+  const cPrice = W - M - 44; // right edge of the Unit price column
+  const cAmt = W - M - 5;    // right edge of the Amount column
   doc.setFillColor(GREEN[0], GREEN[1], GREEN[2]);
   doc.roundedRect(M, y, W - 2 * M, 10, 1.5, 1.5, 'F');
-  font(9, 'bold', [255, 255, 255]);
+  font(8.5, 'bold', [255, 255, 255]);
   doc.text('DESCRIPTION', M + 5, y + 6.5);
-  doc.text('AMOUNT', W - M - 5, y + 6.5, { align: 'right' });
+  doc.text('QTY', cQty, y + 6.5, { align: 'right' });
+  doc.text('UNIT PRICE', cPrice, y + 6.5, { align: 'right' });
+  doc.text('AMOUNT', cAmt, y + 6.5, { align: 'right' });
   y += 10;
 
-  font(10, 'normal', INK);
-  const descLines = doc.splitTextToSize(inv.description || 'Works as agreed', W - 2 * M - 60) as string[];
-  const rowH = Math.max(12, descLines.length * 5 + 7);
-  doc.text(descLines, M + 5, y + 7.5);
-  font(10, 'bold', INK);
-  doc.text(rwf(inv.amount), W - M - 5, y + 7.5, { align: 'right' });
-  y += rowH;
+  const qtyText = (n: number) => (Number.isInteger(n) ? String(n) : String(+n.toFixed(2)));
+  inv.items.forEach((it, n) => {
+    font(9.5, 'normal', INK);
+    const lines = doc.splitTextToSize(it.description, cQty - M - 22) as string[];
+    const rowH = Math.max(10, lines.length * 4.6 + 5.5);
+    if (y + rowH > H - 40) { doc.addPage(); y = M; }
+    if (n % 2 === 1) { doc.setFillColor(TINT[0], TINT[1], TINT[2]); doc.rect(M, y, W - 2 * M, rowH, 'F'); }
+    doc.text(lines, M + 5, y + 6.5);
+    doc.text(qtyText(it.quantity), cQty, y + 6.5, { align: 'right' });
+    doc.text(rwf(it.unitPrice), cPrice, y + 6.5, { align: 'right' });
+    font(9.5, 'bold', INK);
+    doc.text(rwf(Math.round(it.quantity * it.unitPrice)), cAmt, y + 6.5, { align: 'right' });
+    y += rowH;
+  });
   rule(y);
 
-  /* ---------- totals ---------- */
+  /* ---------- VAT note and total ---------- */
   y += 7;
+  if (y > H - 70) { doc.addPage(); y = M; }
+  if (inv.vatMode !== 'none') {
+    font(9.5, 'bold', GREEN_DEEP);
+    doc.text(`All prices are VAT ${inv.vatMode === 'inclusive' ? 'inclusive' : 'exclusive'}.`, M, y);
+  }
   const tx = W - M - 82;
-  const totalRow = (label: string, value: string, bold = false) => {
-    font(10, bold ? 'bold' : 'normal', bold ? INK : MUTED); doc.text(label, tx, y);
-    font(10, 'bold', INK); doc.text(value, W - M - 5, y, { align: 'right' });
-    y += 7;
-  };
-  totalRow('Invoice amount', rwf(inv.amount));
-  totalRow('Payments received', rwf(received));
   y += 1;
   doc.setFillColor(LIME[0], LIME[1], LIME[2]);
   doc.roundedRect(tx - 4, y - 6, W - M - tx + 4, 11, 2, 2, 'F');
   font(11.5, 'bold', [29, 43, 18]);
-  doc.text('Balance due', tx, y + 1.5);
-  doc.text(rwf(balance), W - M - 5, y + 1.5, { align: 'right' });
-  y += 14;
-
-  /* ---------- payments received ---------- */
-  if (inv.payments.length) {
-    font(8, 'bold', GREEN_DEEP);
-    doc.text('PAYMENTS RECEIVED', M, y);
-    y += 4;
-    inv.payments.forEach((p) => {
-      if (y > H - 40) { doc.addPage(); y = M; }
-      doc.setFillColor(TINT[0], TINT[1], TINT[2]);
-      doc.roundedRect(M, y, W - 2 * M, 9, 1.5, 1.5, 'F');
-      font(9, 'normal', [59, 74, 66]);
-      doc.text(`${niceDate(p.date)} · ${p.method}${p.reference ? ` · ${p.reference}` : ''}`, M + 4, y + 6);
-      font(9, 'bold', INK);
-      doc.text(rwf(p.amount), W - M - 5, y + 6, { align: 'right' });
-      y += 11;
-    });
-    y += 4;
-  }
+  doc.text('Amount due', tx, y + 1.5);
+  doc.text(rwf(inv.voided ? 0 : inv.amount), W - M - 5, y + 1.5, { align: 'right' });
+  y += 15;
 
   /* ---------- notes ---------- */
   if (inv.notes) {
@@ -217,9 +206,7 @@ export async function downloadInvoicePdf(inv: InvoicePdfData): Promise<void> {
   y += 4;
   const boxH = 26;
   doc.setFillColor(TINT[0], TINT[1], TINT[2]);
-  doc.setDrawColor(GREEN[0], GREEN[1], GREEN[2]);
-  doc.setLineWidth(0.4);
-  doc.roundedRect(M, y, W - 2 * M, boxH, 2, 2, 'FD');
+  doc.roundedRect(M, y, W - 2 * M, boxH, 2, 2, 'F');
   font(8, 'bold', GREEN_DEEP);
   doc.text('PAYMENT DETAILS', M + 5, y + 7);
   const bank: [string, string][] = [['Bank', BANK.name], ['Account number', BANK.account], ['Account name', BANK.holder]];
