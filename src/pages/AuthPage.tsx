@@ -81,6 +81,7 @@ const AUTH_CSS = `
 @media(max-width:900px){
   .auth-page{grid-template-columns:1fr}
   .auth-brand{padding:28px 20px 30px;gap:18px;position:relative;height:auto}
+  .auth-logo img{width:118px}
   .auth-pitch h1{font-size:24px;margin-bottom:8px}
   .auth-pitch p{font-size:14px}
   .auth-points{display:none}
