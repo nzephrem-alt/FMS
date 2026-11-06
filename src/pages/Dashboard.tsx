@@ -78,6 +78,17 @@ function toTxRow(e: JournalEntry, projectNames: Map<string, string>): TxRow {
   return { key: e.id, title: e.description, detail: `${where} · ${prettyDate(e.date)}${cashNet === 0 ? ' · no cash movement' : ''}`, amount, type };
 }
 
+/**
+ * Phone and tablet fix, scoped to this page. With one column, the columns could grow as wide as the
+ * longest line of text (a long transaction name), making the page wider than the screen. The phone
+ * then zoomed out and everything looked small. minmax(0, 1fr) keeps every column within the screen.
+ */
+const DASH_CSS = `
+@media(max-width:1150px){.dash-page .dash-layout{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:700px){.dash-page .dash-rail{grid-template-columns:minmax(0,1fr)}}
+.dash-page .dash-rail>*{min-width:0}
+`;
+
 function Kpi({ label, value, note, icon: Icon, tone, progress, negative }: {
   label: string; value: string; note: string; icon: LucideIcon; tone: Tone; progress?: number; negative?: boolean;
 }) {
@@ -200,6 +211,7 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
 
   return (
     <div className="dash-page">
+      <style>{DASH_CSS}</style>
       <header className="dash-header">
         <div>
           <div className="eyebrow">{dateLabel}</div>
