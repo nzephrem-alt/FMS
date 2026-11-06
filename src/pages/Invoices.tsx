@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CSSProperties, FormEvent } from 'react';
-import { Plus, Search, Eye, CreditCard, X, FileText, Ban } from 'lucide-react';
+import type { FormEvent, ReactNode } from 'react';
+import { Plus, Search, Eye, CreditCard, X, FileText, Ban, HandCoins, Wallet, AlertTriangle } from 'lucide-react';
 import { postClientInvoice, postClientPayment, reverseClientInvoice, syncStoredInvoices } from '../lib/postings'; // LEDGER
 import { useAccess } from '../lib/access';
 
@@ -32,23 +32,89 @@ const statusOf = (invoice: Invoice): Status => {
   return invoice.dueDate < today() ? 'Overdue' : 'Unpaid';
 };
 
-const styles: Record<string, CSSProperties> = {
-  input: { width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1px solid #dce3df', borderRadius: 8, fontSize: 13, background: '#fff', color: '#24332b' },
-  label: { display: 'block', fontSize: 12, fontWeight: 600, color: '#526158', marginBottom: 6 },
-  button: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px 14px', border: 0, borderRadius: 8, background: '#176b45', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  secondary: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 12px', border: '1px solid #dce3df', borderRadius: 8, background: '#fff', color: '#526158', fontSize: 12, cursor: 'pointer' },
-  overlay: { position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(18,29,23,.48)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 },
-  modal: { width: '100%', maxWidth: 650, maxHeight: '90vh', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 22, boxShadow: '0 20px 60px rgba(0,0,0,.18)' },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 12 },
+const STATUS_CLASS: Record<Status, string> = {
+  Paid: 'inv-paid', 'Partially paid': 'inv-partial', Unpaid: 'inv-unpaid', Overdue: 'inv-overdue', Void: 'inv-void',
 };
+const blankForm = () => ({ invoiceNumber: '', projectId: '', client: '', description: '', issueDate: today(), dueDate: '', amount: '', notes: '' });
+const blankPayment = () => ({ amount: '', date: today(), method: 'Bank transfer', reference: '', notes: '' });
 
-function StatusBadge({ status }: { status: Status }) {
-  const colors: Record<Status, [string, string]> = {
-    Unpaid: ['#f1f5f2', '#526158'], 'Partially paid': ['#fff4dc', '#956300'],
-    Paid: ['#e5f5eb', '#176b45'], Overdue: ['#fdebea', '#b42318'], Void: ['#eee', '#777'],
-  };
-  return <span style={{ background: colors[status][0], color: colors[status][1], padding: '5px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>{status}</span>;
-}
+/**
+ * Page styles live here so this page is a single file. They mirror the Projects page and are
+ * scoped under .projects-module, so they restyle this page (and its pop-ups) only.
+ */
+const INVOICES_CSS = `
+.projects-module{--lime:#d5f56b;--lime-ink:#1d2b12;--ink:#1c2b22;--muted:#7d8a83;--line:#edf0f1;display:flex;flex-direction:column;gap:22px;color:var(--ink)}
+.projects-module button:focus-visible{outline:2px solid #2f8f6b;outline-offset:2px}
+
+/* header */
+.projects-module .welcome-row{margin-bottom:0;gap:20px;flex-wrap:wrap;align-items:flex-end}
+.projects-module .welcome-row h2{font-size:28px;font-weight:700;letter-spacing:-.4px;margin:6px 0 4px;color:var(--ink)}
+.projects-module .welcome-row p{font-size:13px;color:var(--muted)}
+.projects-module .primary-button{height:39px;border-radius:12px;background:var(--lime);color:var(--lime-ink);font-size:12px;font-weight:600;box-shadow:none}
+.projects-module .primary-button:hover{background:#c8ea52}
+
+/* pastel KPI cards */
+.pj-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.pj-kpi{--bg:#bdeed6;--fg:#1f7a4f;display:flex;flex-direction:column;background:var(--bg);border-radius:16px;padding:14px 16px 16px;text-align:center;container-type:inline-size;transition:transform .15s ease,box-shadow .15s ease}
+.pj-kpi:hover{transform:translateY(-1px);box-shadow:0 8px 20px #1c2b2214}
+.pj-kpi.tone-green{--bg:#bdeed6;--fg:#1f7a4f}
+.pj-kpi.tone-blue{--bg:#c9defb;--fg:#3a66ad}
+.pj-kpi.tone-amber{--bg:#fde5c4;--fg:#a8691f}
+.pj-kpi.tone-rose{--bg:#fbd6db;--fg:#b04a58}
+.pj-kpi-top{display:flex;align-items:center;gap:8px;min-height:24px}
+.pj-kpi-icon{width:22px;height:22px;border-radius:50%;background:#ffffffb3;color:var(--fg);display:grid;place-items:center;flex-shrink:0}
+.pj-kpi-label{font-size:11px;font-weight:600;color:#3d4a43;line-height:1.3;text-align:left}
+.pj-kpi-value{font-weight:700;font-size:clamp(16px,10.5cqw,26px);letter-spacing:-.4px;color:var(--ink);margin:16px 0 6px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pj-kpi-note{font-size:10.5px;color:#4f5d55;margin-top:auto;line-height:1.45}
+
+/* register card */
+.projects-module .projects-register{padding:20px 0 6px;background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 1px 2px #1c2b2208;overflow:hidden}
+.projects-module .projects-heading{padding:0 20px 14px}
+.projects-module .projects-heading h3{font-size:16px;font-weight:600;color:var(--ink)}
+.projects-module .projects-heading p{color:var(--muted)}
+.projects-module .projects-search{border-radius:12px;border:1px solid var(--line);background:#fff;height:38px}
+.projects-module .projects-filters select{border-radius:12px;border:1px solid var(--line);height:38px}
+
+/* table */
+.projects-module .projects-table th{background:transparent;padding:10px 20px;font-size:11px;font-weight:500;letter-spacing:0;color:#8a968f;border-bottom:1px solid var(--line);white-space:nowrap}
+.projects-module .projects-table td{padding:14px 20px;font-size:12px;color:#3b4a42;border-top:0;border-bottom:1px solid #f1f4f4;vertical-align:middle}
+.projects-module .projects-table tbody tr:last-child td{border-bottom:0}
+.projects-module .projects-table tbody tr:hover{background:#f7faf9}
+.projects-module .projects-table strong{font-size:12px;font-weight:600;color:var(--ink)}
+.projects-module .projects-table .num{text-align:right}
+.projects-module .money-cell{white-space:nowrap;font-variant-numeric:tabular-nums}
+.projects-module .inv-sub{display:block;margin-top:3px;font-size:10.5px;color:var(--muted)}
+.projects-module .project-row-actions{display:flex;gap:6px}
+.projects-module .project-row-actions button,.projects-module .projects-close{border-radius:10px;border:1px solid var(--line)}
+.projects-module .project-row-actions button:hover,.projects-module .projects-close:hover{background:#f1f5f4;color:var(--ink)}
+.projects-module .projects-empty-icon{background:#ebe8fb;color:#6a5bc2;border-radius:14px}
+
+/* status pills */
+.projects-module .inv-status{display:inline-flex;align-items:center;padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.projects-module .inv-paid{background:#bdeed6;color:#1f6b46}
+.projects-module .inv-partial{background:#fde5c4;color:#a8691f}
+.projects-module .inv-unpaid{background:#c9defb;color:#3a66ad}
+.projects-module .inv-overdue{background:#fbd6db;color:#b04a58}
+.projects-module .inv-void{background:#eceff0;color:#6b776f}
+
+/* pop-ups */
+.projects-module .projects-modal{border-radius:18px;max-width:680px}
+.projects-module .projects-modal-header h3{color:var(--ink)}
+.projects-module .projects-field input,.projects-module .projects-field select,.projects-module .projects-field textarea{border-radius:10px;border-color:#e5eaec}
+.projects-module .projects-cancel{border-radius:12px;border-color:var(--line)}
+.projects-module .project-detail-grid{border-radius:12px}
+.projects-module .inv-outstanding{margin:0 0 14px;padding:12px 14px;border-radius:12px;background:#fde5c4;color:#8a5517;font-size:13px;font-weight:600}
+.projects-module .inv-section-title{font-size:13px;font-weight:600;margin:18px 0 8px;color:var(--ink)}
+.projects-module .inv-text{margin:0;font-size:12.5px;color:#4f5d55;line-height:1.6}
+.projects-module .inv-pay{display:flex;justify-content:space-between;gap:12px;padding:11px 14px;border-radius:12px;background:#f7faf9;margin-bottom:8px;font-size:12px}
+.projects-module .inv-pay strong{white-space:nowrap;font-variant-numeric:tabular-nums}
+.projects-module .inv-danger{color:#b04a58}
+
+@media(max-width:1100px){.pj-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:420px){.pj-kpis{grid-template-columns:1fr}}
+@media(max-width:600px){.projects-module .projects-table th,.projects-module .projects-table td{padding-left:14px;padding-right:14px}}
+@media(prefers-reduced-motion:reduce){.pj-kpi{transition:none}.pj-kpi:hover{transform:none}}
+`;
 
 export default function Invoices() {
   const { isAdmin } = useAccess(); // Viewers see invoices and payments but no buttons that change them
@@ -59,8 +125,10 @@ export default function Invoices() {
   const [formOpen, setFormOpen] = useState(false);
   const [paymentFor, setPaymentFor] = useState<Invoice | null>(null);
   const [view, setView] = useState<Invoice | null>(null);
-  const [form, setForm] = useState({ invoiceNumber: '', projectId: '', client: '', description: '', issueDate: today(), dueDate: '', amount: '', notes: '' });
-  const [payment, setPayment] = useState({ amount: '', date: today(), method: 'Bank transfer', reference: '', notes: '' });
+  const [form, setForm] = useState(blankForm);
+  const [payment, setPayment] = useState(blankPayment);
+  const [formError, setFormError] = useState('');
+  const [payError, setPayError] = useState('');
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(invoices)); }, [invoices]);
 
@@ -74,9 +142,11 @@ export default function Invoices() {
   const totals = useMemo(() => {
     const invoiced = active.reduce((s, i) => s + i.amount, 0);
     const paid = active.reduce((s, i) => s + received(i), 0);
-    const overdue = active.filter(i => statusOf(i) === 'Overdue').reduce((s, i) => s + i.amount - received(i), 0);
-    return { invoiced, paid, balance: invoiced - paid, overdue };
+    const overdueList = active.filter(i => statusOf(i) === 'Overdue');
+    const overdue = overdueList.reduce((s, i) => s + i.amount - received(i), 0);
+    return { invoiced, paid, balance: invoiced - paid, overdue, overdueCount: overdueList.length };
   }, [active]);
+  const collectedPct = totals.invoiced > 0 ? Math.round((totals.paid / totals.invoiced) * 100) : 0;
   const filtered = invoices.filter(i => {
     const q = search.toLowerCase();
     return (filter === 'All' || statusOf(i) === filter) &&
@@ -85,14 +155,20 @@ export default function Invoices() {
   const updateForm = (key: keyof typeof form, value: string) => setForm(current => ({ ...current, [key]: value }));
   const updatePayment = (key: keyof typeof payment, value: string) => setPayment(current => ({ ...current, [key]: value }));
 
+  const openForm = () => { setFormError(''); setFormOpen(true); };
+  const closeForm = () => { setFormOpen(false); setFormError(''); };
+  const openPayment = (invoice: Invoice) => { setPayError(''); setPaymentFor(invoice); };
+  const closePayment = () => { setPaymentFor(null); setPayError(''); };
+
   function createInvoice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setFormError('');
     const amount = Number(form.amount);
     if (!form.invoiceNumber.trim() || !form.client.trim() || !Number.isInteger(amount) || amount <= 0 || !form.dueDate || form.dueDate < form.issueDate) {
-      alert('Check the invoice number, client, amount (whole RWF) and dates. The due date must be on or after the issue date.'); return;
+      setFormError('Check the invoice number, client, amount (whole RWF) and dates. The due date must be on or after the issue date.'); return;
     }
     if (invoices.some(i => i.invoiceNumber.toLowerCase() === form.invoiceNumber.trim().toLowerCase())) {
-      alert('That invoice number already exists.'); return;
+      setFormError('That invoice number already exists.'); return;
     }
     const project = projects.find(p => p.id === form.projectId);
     const invoice: Invoice = {
@@ -103,66 +179,229 @@ export default function Invoices() {
     };
     // LEDGER: post first, so an invoice is never saved without its journal entry
     try { postClientInvoice(invoice); }
-    catch (e) { alert(errText(e, 'Could not post the invoice to the ledger.')); return; }
+    catch (e) { setFormError(errText(e, 'Could not post the invoice to the ledger.')); return; }
     setInvoices(current => [invoice, ...current]); setFormOpen(false);
-    setForm({ invoiceNumber: '', projectId: '', client: '', description: '', issueDate: today(), dueDate: '', amount: '', notes: '' });
+    setForm(blankForm());
   }
 
   function recordPayment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!paymentFor) return;
+    setPayError('');
     const amount = Number(payment.amount); const balance = paymentFor.amount - received(paymentFor);
-    if (!Number.isInteger(amount) || amount <= 0 || amount > balance) { alert(`Enter a whole RWF payment greater than zero and no more than ${money(balance)}.`); return; }
+    if (!Number.isInteger(amount) || amount <= 0 || amount > balance) { setPayError(`Enter a whole RWF payment greater than zero and no more than ${money(balance)}.`); return; }
     const newPayment: Payment = { id: makeId(), amount, date: payment.date, method: payment.method, reference: payment.reference.trim(), notes: payment.notes.trim() };
     // LEDGER: post first, so a payment is never saved without its journal entry
     try { postClientInvoice(paymentFor); postClientPayment(paymentFor, newPayment); }
-    catch (e) { alert(errText(e, 'Could not post the payment to the ledger.')); return; }
+    catch (e) { setPayError(errText(e, 'Could not post the payment to the ledger.')); return; }
     setInvoices(current => current.map(i => i.id === paymentFor.id ? { ...i, payments: [...i.payments, newPayment] } : i));
-    setPaymentFor(null); setPayment({ amount: '', date: today(), method: 'Bank transfer', reference: '', notes: '' });
+    setPaymentFor(null); setPayment(blankPayment());
   }
 
   function voidInvoice(invoice: Invoice) {
-    if (received(invoice) > 0) { alert('This invoice has receipts recorded. Reverse or resolve those receipts before voiding it.'); return; }
+    if (received(invoice) > 0) { window.alert('This invoice has receipts recorded. Reverse or resolve those receipts before voiding it.'); return; }
     if (!window.confirm(`Void invoice ${invoice.invoiceNumber}? It will remain in the records but be excluded from totals.`)) return;
     // LEDGER: post the reversing entry first
     try { reverseClientInvoice(invoice.id, `Invoice ${invoice.invoiceNumber} voided`); }
-    catch (e) { alert(errText(e, 'Could not void the invoice in the ledger.')); return; }
+    catch (e) { window.alert(errText(e, 'Could not void the invoice in the ledger.')); return; }
     setInvoices(current => current.map(i => i.id === invoice.id ? { ...i, voided: true } : i)); setView(null);
   }
 
   const field = (label: string, key: keyof typeof form, type = 'text', required = false) => (
-    <div><label style={styles.label}>{label}</label><input style={styles.input} type={type} required={required} value={form[key]} onChange={e => updateForm(key, e.target.value)} /></div>
+    <label className="projects-field">{label}{required ? ' *' : ''}
+      <input type={type} required={required} value={form[key]} onChange={e => updateForm(key, e.target.value)} />
+    </label>
   );
-  const card: CSSProperties = { background: '#fff', border: '1px solid #e8ede9', borderRadius: 12, padding: 17 };
 
-  return <div style={{ display: 'grid', gap: 20, color: '#24332b' }}>
-    <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-      <div><div style={{ fontSize: 12, color: '#718078', fontWeight: 600 }}>FINANCE / RECEIVABLES</div><h1 style={{ fontSize: 24, margin: '5px 0' }}>Client Invoices</h1><p style={{ fontSize: 13, color: '#718078', margin: 0 }}>Issue invoices and track client payments and outstanding balances.</p></div>
-      {isAdmin && <button type="button" style={styles.button} onClick={() => setFormOpen(true)}><Plus size={16} /> Create invoice</button>}
-    </header>
+  return (
+    <section className="projects-module">
+      <style>{INVOICES_CSS}</style>
 
-    <div style={styles.grid}>
-      {([['Total invoiced', totals.invoiced], ['Payments received', totals.paid], ['Outstanding balance', totals.balance], ['Overdue balance', totals.overdue]] as [string, number][]).map(([label, value]) => <div key={label} style={card}><div style={{ color: '#718078', fontSize: 12 }}>{label}</div><div style={{ fontSize: 21, fontWeight: 700, marginTop: 8 }}>{money(value)}</div></div>)}
-    </div>
-
-    <section style={{ ...card, padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, borderBottom: '1px solid #edf0ed' }}>
-        <div><h3 style={{ fontSize: 15, margin: 0 }}>Invoice register</h3><p style={{ fontSize: 11, color: '#89958e', margin: '4px 0 0' }}>{filtered.length} record(s)</p></div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><div style={{ position: 'relative' }}><Search size={15} style={{ position: 'absolute', left: 10, top: 11, color: '#89958e' }} /><input style={{ ...styles.input, width: 210, paddingLeft: 32 }} placeholder="Search invoices..." value={search} onChange={e => setSearch(e.target.value)} /></div><select style={{ ...styles.input, width: 'auto' }} value={filter} onChange={e => setFilter(e.target.value)}>{['All', 'Unpaid', 'Partially paid', 'Paid', 'Overdue', 'Void'].map(s => <option key={s}>{s}</option>)}</select></div>
+      <div className="welcome-row">
+        <div>
+          <div className="eyebrow">FINANCIAL MANAGEMENT</div>
+          <h2>Client Invoices</h2>
+          <p>Issue invoices and track client payments and outstanding balances.</p>
+        </div>
+        {isAdmin && <div className="projects-header-actions"><button type="button" className="primary-button" onClick={openForm}><Plus size={16} /> Create invoice</button></div>}
       </div>
-      {filtered.length === 0 ? <div style={{ textAlign: 'center', padding: 45, color: '#89958e' }}><FileText size={30} /><p>{isAdmin ? 'No invoices found. Create an invoice to begin tracking receivables.' : 'No invoices found.'}</p></div> : <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', minWidth: 850, borderCollapse: 'collapse', fontSize: 12 }}><thead><tr style={{ background: '#f7f9f7', color: '#718078' }}>{['INVOICE', 'CLIENT / PROJECT', 'ISSUE DATE', 'DUE DATE', 'AMOUNT', 'BALANCE DUE', 'STATUS', 'ACTIONS'].map(h => <th key={h} style={{ textAlign: 'left', padding: 12, fontSize: 10, whiteSpace: 'nowrap' }}>{h}</th>)}</tr></thead><tbody>{filtered.map(i => <tr key={i.id} style={{ borderTop: '1px solid #edf0ed' }}><td style={{ padding: 13, fontWeight: 700 }}>{i.invoiceNumber}</td><td style={{ padding: 13 }}><strong>{i.client}</strong><div style={{ color: '#89958e', marginTop: 3 }}>{i.projectName}</div></td><td style={{ padding: 13 }}>{i.issueDate}</td><td style={{ padding: 13 }}>{i.dueDate}</td><td style={{ padding: 13 }}>{money(i.amount)}</td><td style={{ padding: 13, fontWeight: 700 }}>{money(i.voided ? 0 : i.amount - received(i))}</td><td style={{ padding: 13 }}><StatusBadge status={statusOf(i)} /></td><td style={{ padding: 13, whiteSpace: 'nowrap' }}><button title="View invoice" type="button" style={styles.secondary} onClick={() => setView(i)}><Eye size={14} /></button>{isAdmin && !i.voided && i.amount > received(i) && <button title="Record payment" type="button" style={{ ...styles.secondary, marginLeft: 5 }} onClick={() => setPaymentFor(i)}><CreditCard size={14} /></button>}</td></tr>)}</tbody></table></div>}
+
+      <div className="pj-kpis">
+        <Metric icon={<FileText size={13} />} label="Total invoiced" value={money(totals.invoiced)} note={`${active.length} active invoice${active.length === 1 ? '' : 's'}`} tone="blue" />
+        <Metric icon={<HandCoins size={13} />} label="Payments received" value={money(totals.paid)} note={totals.invoiced > 0 ? `${collectedPct}% of invoiced amount collected` : 'No invoices issued yet'} tone="green" />
+        <Metric icon={<Wallet size={13} />} label="Outstanding balance" value={money(totals.balance)} note="Invoiced but not yet received" tone="amber" />
+        <Metric icon={<AlertTriangle size={13} />} label="Overdue balance" value={money(totals.overdue)} note={`${totals.overdueCount} overdue invoice${totals.overdueCount === 1 ? '' : 's'}`} tone="rose" />
+      </div>
+
+      <div className="panel projects-register">
+        <div className="panel-heading projects-heading">
+          <div>
+            <h3>Invoice register</h3>
+            <p>{filtered.length} invoice{filtered.length === 1 ? '' : 's'} displayed</p>
+          </div>
+          <div className="projects-filters">
+            <label className="projects-search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search invoices..." /></label>
+            <select value={filter} onChange={e => setFilter(e.target.value)} aria-label="Filter by status">
+              {['All', 'Unpaid', 'Partially paid', 'Paid', 'Overdue', 'Void'].map(s => <option key={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="projects-empty">
+            <div className="projects-empty-icon"><FileText size={24} /></div>
+            <h3>{invoices.length ? 'No matching invoices' : 'No invoices yet'}</h3>
+            <p>{invoices.length ? 'Try another search term or status filter.' : isAdmin ? 'Create an invoice to begin tracking receivables.' : 'Invoices will appear here once the Admin creates them.'}</p>
+          </div>
+        ) : (
+          <div className="projects-table-wrap">
+            <table className="projects-table">
+              <thead>
+                <tr><th>Invoice</th><th>Client / project</th><th>Issue date</th><th>Due date</th><th className="num">Amount</th><th className="num">Balance due</th><th>Status</th><th /></tr>
+              </thead>
+              <tbody>
+                {filtered.map(i => (
+                  <tr key={i.id}>
+                    <td><strong>{i.invoiceNumber}</strong></td>
+                    <td><strong>{i.client}</strong><span className="inv-sub">{i.projectName}</span></td>
+                    <td className="money-cell">{i.issueDate}</td>
+                    <td className="money-cell">{i.dueDate}</td>
+                    <td className="money-cell num">{money(i.amount)}</td>
+                    <td className="money-cell num"><strong>{money(i.voided ? 0 : i.amount - received(i))}</strong></td>
+                    <td><span className={`inv-status ${STATUS_CLASS[statusOf(i)]}`}>{statusOf(i)}</span></td>
+                    <td>
+                      <div className="project-row-actions">
+                        <button type="button" title="View invoice" aria-label={`View invoice ${i.invoiceNumber}`} onClick={() => setView(i)}><Eye size={15} /></button>
+                        {isAdmin && !i.voided && i.amount > received(i) && <button type="button" title="Record payment" aria-label={`Record payment for ${i.invoiceNumber}`} onClick={() => openPayment(i)}><CreditCard size={15} /></button>}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Create invoice */}
+      {formOpen && isAdmin && (
+        <div className="projects-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) closeForm(); }}>
+          <section className="projects-modal" role="dialog" aria-modal="true" aria-labelledby="inv-form-title">
+            <div className="projects-modal-header">
+              <div><div className="eyebrow">NEW INVOICE</div><h3 id="inv-form-title">Create client invoice</h3></div>
+              <button type="button" className="projects-close" onClick={closeForm} aria-label="Close"><X size={19} /></button>
+            </div>
+            {formError && <p className="projects-validation" role="alert">{formError}</p>}
+            <form onSubmit={createInvoice} noValidate>
+              <div className="projects-form-grid">
+                {field('Invoice number', 'invoiceNumber', 'text', true)}
+                <label className="projects-field">Project
+                  <select value={form.projectId} onChange={e => { const id = e.target.value; const p = projects.find(x => x.id === id); setForm(current => ({ ...current, projectId: id, client: p?.client || current.client })); }}>
+                    <option value="">General / Unassigned</option>
+                    {projects.map(p => <option key={p.id} value={p.id}>{p.projectName}</option>)}
+                  </select>
+                </label>
+                {field('Client name', 'client', 'text', true)}
+                {field('Invoice amount (RWF)', 'amount', 'number', true)}
+                {field('Issue date', 'issueDate', 'date', true)}
+                {field('Due date', 'dueDate', 'date', true)}
+                <label className="projects-field field-wide">Description / work billed
+                  <textarea rows={3} value={form.description} onChange={e => updateForm('description', e.target.value)} />
+                </label>
+                <label className="projects-field field-wide">Notes
+                  <textarea rows={2} value={form.notes} onChange={e => updateForm('notes', e.target.value)} />
+                </label>
+              </div>
+              <div className="projects-form-actions">
+                <button type="button" className="projects-cancel" onClick={closeForm}>Cancel</button>
+                <button type="submit" className="primary-button"><Plus size={16} /> Save invoice</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {/* Record payment */}
+      {paymentFor && isAdmin && (
+        <div className="projects-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) closePayment(); }}>
+          <section className="projects-modal" role="dialog" aria-modal="true" aria-labelledby="inv-pay-title">
+            <div className="projects-modal-header">
+              <div><div className="eyebrow">{paymentFor.invoiceNumber} · {paymentFor.client}</div><h3 id="inv-pay-title">Record client payment</h3></div>
+              <button type="button" className="projects-close" onClick={closePayment} aria-label="Close"><X size={19} /></button>
+            </div>
+            <p className="inv-outstanding">Outstanding: {money(paymentFor.amount - received(paymentFor))}</p>
+            {payError && <p className="projects-validation" role="alert">{payError}</p>}
+            <form onSubmit={recordPayment} noValidate>
+              <div className="projects-form-grid">
+                <label className="projects-field">Payment amount (RWF) *<input type="number" required value={payment.amount} onChange={e => updatePayment('amount', e.target.value)} /></label>
+                <label className="projects-field">Payment date *<input type="date" required value={payment.date} onChange={e => updatePayment('date', e.target.value)} /></label>
+                <label className="projects-field">Payment method
+                  <select value={payment.method} onChange={e => updatePayment('method', e.target.value)}>
+                    {['Bank transfer', 'Cash', 'Mobile money', 'Cheque', 'Other'].map(m => <option key={m}>{m}</option>)}
+                  </select>
+                </label>
+                <label className="projects-field">Reference<input value={payment.reference} onChange={e => updatePayment('reference', e.target.value)} /></label>
+                <label className="projects-field field-wide">Notes<textarea rows={2} value={payment.notes} onChange={e => updatePayment('notes', e.target.value)} /></label>
+              </div>
+              <div className="projects-form-actions">
+                <button type="button" className="projects-cancel" onClick={closePayment}>Cancel</button>
+                <button type="submit" className="primary-button"><CreditCard size={16} /> Save payment</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {/* Invoice details */}
+      {view && (
+        <div className="projects-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setView(null); }}>
+          <section className="projects-modal project-detail-modal" role="dialog" aria-modal="true" aria-labelledby="inv-view-title">
+            <div className="projects-modal-header">
+              <div><div className="eyebrow">INVOICE DETAILS</div><h3 id="inv-view-title">{view.invoiceNumber}</h3></div>
+              <button type="button" className="projects-close" onClick={() => setView(null)} aria-label="Close"><X size={19} /></button>
+            </div>
+            <span className={`inv-status ${STATUS_CLASS[statusOf(view)]}`}>{statusOf(view)}</span>
+            <div className="project-detail-grid">
+              <Detail label="Client" value={view.client} />
+              <Detail label="Project" value={view.projectName} />
+              <Detail label="Issue date" value={view.issueDate} />
+              <Detail label="Due date" value={view.dueDate} />
+              <Detail label="Invoice amount" value={money(view.amount)} />
+              <Detail label="Received" value={money(received(view))} />
+              <Detail label="Outstanding" value={money(view.voided ? 0 : view.amount - received(view))} />
+            </div>
+            <h4 className="inv-section-title">Description</h4>
+            <p className="inv-text">{view.description || 'No description provided.'}</p>
+            <h4 className="inv-section-title">Payment history ({view.payments.length})</h4>
+            {view.payments.length === 0
+              ? <p className="inv-text">No payments recorded.</p>
+              : view.payments.map(p => (
+                <div key={p.id} className="inv-pay">
+                  <span>{p.date} · {p.method}{p.reference ? ` · ${p.reference}` : ''}</span>
+                  <strong>{money(p.amount)}</strong>
+                </div>
+              ))}
+            <div className="projects-form-actions">
+              {isAdmin && !view.voided && received(view) === 0 && <button type="button" className="projects-cancel inv-danger" onClick={() => voidInvoice(view)}><Ban size={15} /> Void invoice</button>}
+              {isAdmin && !view.voided && view.amount > received(view) && <button type="button" className="primary-button" onClick={() => { openPayment(view); setView(null); }}><CreditCard size={15} /> Record payment</button>}
+              <button type="button" className="projects-cancel" onClick={() => setView(null)}>Close</button>
+            </div>
+          </section>
+        </div>
+      )}
     </section>
-    <div style={{ padding: 13, borderRadius: 9, background: '#f2f7f3', color: '#526158', fontSize: 11, lineHeight: 1.6 }}>Each invoice is posted to the ledger as debit Accounts Receivable and credit Contract Revenue. Each payment is posted as debit Cash, Bank or Mobile Money and credit Accounts Receivable. Voiding an invoice posts a reversing entry.</div>
+  );
+}
 
-    {formOpen && isAdmin && <div style={styles.overlay}><section style={styles.modal}><div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 18 }}><div><h2 style={{ fontSize: 18, margin: 0 }}>Create client invoice</h2><p style={{ fontSize: 12, color: '#89958e' }}>Enter the invoice details.</p></div><button type="button" style={styles.secondary} onClick={() => setFormOpen(false)}><X size={17} /></button></div><form onSubmit={createInvoice}><div style={styles.grid}>
-      {field('Invoice number', 'invoiceNumber', 'text', true)}
-      <div><label style={styles.label}>Project</label><select style={styles.input} value={form.projectId} onChange={e => { const id = e.target.value; const p = projects.find(x => x.id === id); setForm(current => ({ ...current, projectId: id, client: p?.client || current.client })); }}><option value="">General / Unassigned</option>{projects.map(p => <option key={p.id} value={p.id}>{p.projectName}</option>)}</select></div>
-      {field('Client name', 'client', 'text', true)}{field('Invoice amount (RWF)', 'amount', 'number', true)}{field('Issue date', 'issueDate', 'date', true)}{field('Due date', 'dueDate', 'date', true)}
-      <div style={{ gridColumn: '1 / -1' }}><label style={styles.label}>Description / work billed</label><textarea style={{ ...styles.input, minHeight: 70 }} value={form.description} onChange={e => updateForm('description', e.target.value)} /></div>
-      <div style={{ gridColumn: '1 / -1' }}><label style={styles.label}>Notes</label><textarea style={{ ...styles.input, minHeight: 55 }} value={form.notes} onChange={e => updateForm('notes', e.target.value)} /></div>
-      </div><div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}><button type="button" style={styles.secondary} onClick={() => setFormOpen(false)}>Cancel</button><button type="submit" style={styles.button}><Plus size={15} /> Save invoice</button></div></form></section></div>}
+function Metric({ icon, label, value, note, tone }: { icon: ReactNode; label: string; value: string; note: string; tone: 'green' | 'blue' | 'amber' | 'rose' }) {
+  return (
+    <article className={`pj-kpi tone-${tone}`}>
+      <div className="pj-kpi-top"><span className="pj-kpi-icon" aria-hidden="true">{icon}</span><span className="pj-kpi-label">{label}</span></div>
+      <div className="pj-kpi-value">{value}</div>
+      <div className="pj-kpi-note">{note}</div>
+    </article>
+  );
+}
 
-    {paymentFor && isAdmin && <div style={styles.overlay}><section style={styles.modal}><div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 18 }}><div><h2 style={{ fontSize: 18, margin: 0 }}>Record client payment</h2><p style={{ color: '#89958e', fontSize: 12 }}>{paymentFor.invoiceNumber} · {paymentFor.client}</p></div><button type="button" style={styles.secondary} onClick={() => setPaymentFor(null)}><X size={17} /></button></div><p style={{ background: '#f7f9f7', padding: 12, borderRadius: 8, fontWeight: 700 }}>Outstanding: {money(paymentFor.amount - received(paymentFor))}</p><form onSubmit={recordPayment}><div style={styles.grid}><div><label style={styles.label}>Payment amount (RWF)</label><input style={styles.input} type="number" required value={payment.amount} onChange={e => updatePayment('amount', e.target.value)} /></div><div><label style={styles.label}>Payment date</label><input style={styles.input} type="date" required value={payment.date} onChange={e => updatePayment('date', e.target.value)} /></div><div><label style={styles.label}>Payment method</label><select style={styles.input} value={payment.method} onChange={e => updatePayment('method', e.target.value)}>{['Bank transfer', 'Cash', 'Mobile money', 'Cheque', 'Other'].map(m => <option key={m}>{m}</option>)}</select></div><div><label style={styles.label}>Reference</label><input style={styles.input} value={payment.reference} onChange={e => updatePayment('reference', e.target.value)} /></div><div style={{ gridColumn: '1 / -1' }}><label style={styles.label}>Notes</label><textarea style={styles.input} value={payment.notes} onChange={e => updatePayment('notes', e.target.value)} /></div></div><div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}><button type="button" style={styles.secondary} onClick={() => setPaymentFor(null)}>Cancel</button><button type="submit" style={styles.button}><CreditCard size={15} /> Save payment</button></div></form></section></div>}
-
-    {view && <div style={styles.overlay}><section style={styles.modal}><div style={{ display: 'flex', justifyContent: 'space-between' }}><div><small style={{ color: '#718078' }}>INVOICE DETAILS</small><h2 style={{ margin: '5px 0 10px' }}>{view.invoiceNumber}</h2><StatusBadge status={statusOf(view)} /></div><button type="button" style={styles.secondary} onClick={() => setView(null)}><X size={17} /></button></div><div style={{ ...styles.grid, marginTop: 18 }}>{[['Client', view.client], ['Project', view.projectName], ['Issue date', view.issueDate], ['Due date', view.dueDate], ['Invoice amount', money(view.amount)], ['Received', money(received(view))], ['Outstanding', money(view.voided ? 0 : view.amount - received(view))]].map(([k, v]) => <div key={k} style={{ background: '#f7f9f7', padding: 10, borderRadius: 8 }}><small style={{ color: '#89958e' }}>{k}</small><div style={{ fontSize: 12, fontWeight: 600, marginTop: 5 }}>{v}</div></div>)}</div><h3 style={{ fontSize: 14, marginTop: 20 }}>Description</h3><p style={{ fontSize: 12, color: '#526158' }}>{view.description || 'No description provided.'}</p><h3 style={{ fontSize: 14 }}>Payment history ({view.payments.length})</h3>{view.payments.length === 0 ? <p style={{ fontSize: 12, color: '#89958e' }}>No payments recorded.</p> : view.payments.map(p => <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', padding: 10, border: '1px solid #edf0ed', borderRadius: 8, marginBottom: 7 }}><span style={{ fontSize: 12 }}>{p.date} · {p.method}{p.reference ? ` · ${p.reference}` : ''}</span><strong style={{ fontSize: 12 }}>{money(p.amount)}</strong></div>)}<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>{isAdmin && !view.voided && received(view) === 0 && <button type="button" style={{ ...styles.secondary, color: '#b42318' }} onClick={() => voidInvoice(view)}><Ban size={14} /> Void invoice</button>}{isAdmin && !view.voided && view.amount > received(view) && <button type="button" style={styles.button} onClick={() => { setPaymentFor(view); setView(null); }}><CreditCard size={14} /> Record payment</button>}<button type="button" style={styles.secondary} onClick={() => setView(null)}>Close</button></div></section></div>}
-  </div>;
+function Detail({ label, value }: { label: string; value: string }) {
+  return <div className="project-detail-item"><span>{label}</span><strong>{value}</strong></div>;
 }
