@@ -21,6 +21,8 @@ type ProjectCost = {
   reversedAt?: string; createdAt: string;
   /** Mobile money fee paid with the amount paid at recording (part of the project's cost). */
   momoFee?: number;
+  /** Work on site this cost was for, e.g. Roofing or Walling (used in the weekly report). */
+  activity?: string;
 };
 type ProjectOption = { id: string; projectName: string; client?: string; location?: string };
 type CostForm = Omit<ProjectCost, 'id' | 'reversed' | 'reversedAt' | 'createdAt'>;
@@ -326,7 +328,7 @@ export default function ProjectCosts() {
     };
     const costRows = costs.filter(c => {
       if (c.reversed !== showReversed) return false;
-      const matchesText = !q || [c.id, c.projectName, c.description, c.supplier, c.reference, c.category, c.labourType ?? ''].some(v => v.toLowerCase().includes(q));
+      const matchesText = !q || [c.id, c.projectName, c.description, c.supplier, c.reference, c.category, c.labourType ?? '', c.activity ?? ''].some(v => v.toLowerCase().includes(q));
       const matchesProject = projectFilter === 'All' || c.projectId === projectFilter;
       const matchesCategory = categoryFilter === 'All' || c.category === categoryFilter;
       const matchesLabour = labourFilter === 'All' || c.labourType === labourFilter;
@@ -369,7 +371,7 @@ export default function ProjectCosts() {
     const fee = form.paymentMethod === 'Mobile money' && form.amountPaid > 0 ? (form.momoFee ?? 0) : 0;
     if (!Number.isInteger(fee) || fee < 0) { setError('Enter the MoMo fee in whole RWF, or 0 if there was none.'); return; }
     const nextNo = costs.reduce((max, c) => { const m = c.id.match(/^CST-(\d+)$/); return m ? Math.max(max, Number(m[1])) : max; }, 0) + 1;
-    const record: ProjectCost = { ...form, momoFee: fee || undefined, labourType: form.category === 'Labour' ? (form.labourType ?? '').trim() : '', projectName: project.projectName, id: `CST-${String(nextNo).padStart(4, '0')}`, reversed: false, createdAt: new Date().toISOString() };
+    const record: ProjectCost = { ...form, activity: (form.activity ?? '').trim() || undefined, momoFee: fee || undefined, labourType: form.category === 'Labour' ? (form.labourType ?? '').trim() : '', projectName: project.projectName, id: `CST-${String(nextNo).padStart(4, '0')}`, reversed: false, createdAt: new Date().toISOString() };
     // LEDGER: post first, so a cost is never saved without its journal entry
     try { postProjectCost(record); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not post to the ledger.'); return; }
@@ -553,7 +555,7 @@ export default function ProjectCosts() {
               const progress = c.amount > 0 ? Math.min(c.amountPaid / c.amount * 100, 100) : 0;
               return <tr key={c.id} className={c.reversed ? 'is-reversed' : undefined}>
                 <td className="money-cell"><strong>{c.date}</strong><span className="cost-sub">{c.id}</span></td>
-                <td style={{ minWidth: 180 }}><strong>{c.projectName}</strong><span className="cost-sub">{c.description}</span></td>
+                <td style={{ minWidth: 180 }}><strong>{c.projectName}</strong><span className="cost-sub">{c.activity ? `${c.activity} · ` : ''}{c.description}</span></td>
                 <td>{c.category}{c.category === 'Labour' && c.labourType && <span className="cost-sub">{c.labourType}</span>}</td>
                 <td>{c.supplier || '—'}</td>
                 <td className="money-cell"><strong>{money(c.amount)}</strong>{feesOf(c) > 0 && <span className="cost-sub">+ {money(feesOf(c))} MoMo fee</span>}</td>
@@ -577,6 +579,7 @@ export default function ProjectCosts() {
             <label className="projects-field">Date *<input required type="date" value={form.date} onChange={e => setField('date', e.target.value)} /></label>
             <label className="projects-field">Cost category *<select value={form.category} onChange={e => setField('category', e.target.value as CostCategory)}>{categories.map(c => <option key={c}>{c}</option>)}</select></label>
             {form.category === 'Labour' && <label className="projects-field field-wide">Labour type<input list="labour-types" value={form.labourType ?? ''} onChange={e => setField('labourType', e.target.value)} placeholder="e.g. Masons, Helpers, Foreman, or type your own" /><datalist id="labour-types">{labourOptions.map(t => <option key={t} value={t} />)}</datalist></label>}
+            <label className="projects-field field-wide">Activity on site<input value={form.activity ?? ''} onChange={e => setField('activity', e.target.value)} placeholder="Optional, e.g. Roofing, Walling, Concrete channel casting" /></label>
             <label className="projects-field field-wide">Description *<input required value={form.description} onChange={e => setField('description', e.target.value)} placeholder="e.g. Cement purchase for foundation works" /></label>
             <label className="projects-field">Supplier / recipient<input value={form.supplier} onChange={e => setField('supplier', e.target.value)} placeholder="Name of supplier or worker" /></label>
             <label className="projects-field">Total cost (RWF) *<input required type="number" min="1" step="1" value={form.amount || ''} onChange={e => setField('amount', Number(e.target.value))} /></label>
@@ -599,6 +602,7 @@ export default function ProjectCosts() {
         <div className="project-detail-grid">
           <Detail label="Project" value={viewCost.projectName} /><Detail label="Date" value={viewCost.date} />
           <Detail label="Category" value={viewCost.category} />
+          {viewCost.activity && <Detail label="Activity" value={viewCost.activity} />}
           {viewCost.category === 'Labour' && <Detail label="Labour type" value={viewCost.labourType || '—'} />}
           <Detail label="Supplier / recipient" value={viewCost.supplier || '—'} />
           <Detail label="Total cost" value={money(viewCost.amount)} /><Detail label="Amount paid" value={money(viewCost.amountPaid)} />
