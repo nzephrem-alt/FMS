@@ -102,6 +102,7 @@ export const TABLES: TableSpec[] = [
         notes: text(c.notes),
         reversed: c.reversed === true,
         reversed_at: stamp(c.reversedAt),
+        momo_fee: amount(c.momoFee),
         recorded_at: stamp(c.createdAt) ?? new Date().toISOString(),
       };
     },
@@ -122,6 +123,7 @@ export const TABLES: TableSpec[] = [
       reversed: r.reversed === true,
       ...(r.reversed_at ? { reversedAt: isoStamp(r.reversed_at) } : {}),
       createdAt: isoStamp(r.recorded_at),
+      ...(amount(r.momo_fee) > 0 ? { momoFee: amount(r.momo_fee) } : {}),
     }),
   },
   {
@@ -328,13 +330,14 @@ export const TABLES: TableSpec[] = [
         method: text(p.method),
         reference: text(p.reference),
         notes: text(p.notes),
+        fee: amount(p.fee),
       };
     },
     fromRow: (r) => ({
       id: text(r.id),
       expenseId: text(r.expense_id),
       position: whole(r.position),
-      payment: { id: text(r.payment_id), amount: amount(r.amount), date: text(r.payment_date), method: text(r.method), reference: text(r.reference), notes: text(r.notes) },
+      payment: { id: text(r.payment_id), amount: amount(r.amount), date: text(r.payment_date), method: text(r.method), reference: text(r.reference), notes: text(r.notes), ...(amount(r.fee) > 0 ? { fee: amount(r.fee) } : {}) },
     }),
   },  {
     // Staff: one row per person. Salary history is kept as a list in one column.
