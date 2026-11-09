@@ -36,7 +36,11 @@ type Payment = {
   method: string;
   reference: string;
   notes: string;
+  /** Mobile money fee paid with this payment (booked to Bank & Mobile Money Charges). */
+  fee?: number;
 };
+
+const FEE_MEMO = 'Mobile money fee';
 
 type Expense = {
   id: string;
@@ -64,6 +68,7 @@ type ExpenseForm = {
   paymentMethod: string;
   reference: string;
   notes: string;
+  momoFee: number;
 };
 
 type PaymentForm = {
@@ -72,6 +77,7 @@ type PaymentForm = {
   method: string;
   reference: string;
   notes: string;
+  fee: number;
 };
 
 const money = (amount: number) =>
@@ -166,6 +172,7 @@ const initialExpenseForm = (): ExpenseForm => ({
   paymentMethod: 'Cash',
   reference: '',
   notes: '',
+  momoFee: 0,
 });
 
 /**
@@ -268,6 +275,7 @@ export default function Expenses() {
     method: 'Cash',
     reference: '',
     notes: '',
+    fee: 0,
   });
 
   const [error, setError] = useState('');
@@ -381,6 +389,12 @@ export default function Expenses() {
       return;
     }
 
+    const initialFee = form.paymentMethod === 'Mobile money' && form.amountPaid > 0 ? form.momoFee : 0;
+    if (!Number.isInteger(initialFee) || initialFee < 0) {
+      setError('Enter the MoMo fee in whole RWF, or 0 if there was none.');
+      return;
+    }
+
     const id = makeId();
     const expenseNumber = `EXP-${String(expenses.length + 1).padStart(4, '0')}`;
 
@@ -405,6 +419,7 @@ export default function Expenses() {
               method: form.paymentMethod,
               reference: form.reference.trim(),
               notes: 'Initial payment recorded with expense.',
+              ...(initialFee > 0 ? { fee: initialFee } : {}),
             },
           ]
         : [],
@@ -429,6 +444,13 @@ export default function Expenses() {
           party: form.supplier.trim() || undefined,
           memo: `Initial payment - ${form.description.trim()}`,
         });
+      }
+
+      if (initialFee > 0) {
+        lines.push(
+          { account: ACC.bankCharges, debit: initialFee, memo: FEE_MEMO },
+          { account: ACC.mobileMoney, debit: 0, credit: initialFee, memo: FEE_MEMO },
+        );
       }
 
       const unpaid = form.amount - form.amountPaid;
@@ -492,6 +514,12 @@ export default function Expenses() {
       return;
     }
 
+    const fee = paymentForm.method === 'Mobile money' ? paymentForm.fee : 0;
+    if (!Number.isInteger(fee) || fee < 0) {
+      setError('Enter the MoMo fee in whole RWF, or 0 if there was none.');
+      return;
+    }
+
     const paymentNumber = paymentExpense.payments.length + 1;
 
     try {
@@ -515,6 +543,10 @@ export default function Expenses() {
             party: paymentExpense.supplier || undefined,
             memo: `Settlement of ${paymentExpense.expenseNumber}`,
           },
+          ...(fee > 0 ? [
+            { account: ACC.bankCharges, debit: fee, memo: FEE_MEMO },
+            { account: ACC.mobileMoney, credit: fee, memo: FEE_MEMO },
+          ] : []),
         ],
       });
 
@@ -525,6 +557,7 @@ export default function Expenses() {
         method: paymentForm.method,
         reference: paymentForm.reference.trim(),
         notes: paymentForm.notes.trim(),
+        ...(fee > 0 ? { fee } : {}),
       };
 
       const updated = expenses.map((expense) =>
@@ -545,6 +578,7 @@ export default function Expenses() {
         method: 'Cash',
         reference: '',
         notes: '',
+        fee: 0,
       });
       setEntries(ledger.getEntries());
       setSuccess('Expense payment recorded successfully.');
@@ -565,6 +599,7 @@ export default function Expenses() {
       method: 'Cash',
       reference: '',
       notes: '',
+      fee: 0,
     });
     setPaymentExpense(expense);
   };
@@ -920,6 +955,22 @@ export default function Expenses() {
               </select>
             </label>
 
+            {form.paymentMethod === 'Mobile money' && form.amountPaid > 0 && (
+              <label className="projects-field">
+                MoMo fee (RWF)
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={form.momoFee || ''}
+                  onChange={(event) =>
+                    setForm({ ...form, momoFee: Number(event.target.value) })
+                  }
+                  placeholder="0"
+                />
+              </label>
+            )}
+
             <label className="projects-field">
               Payment reference
               <input
@@ -1038,6 +1089,22 @@ export default function Expenses() {
               </select>
             </label>
 
+            {paymentForm.method === 'Mobile money' && (
+              <label className="projects-field">
+                MoMo fee (RWF)
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={paymentForm.fee || ''}
+                  onChange={(event) =>
+                    setPaymentForm({ ...paymentForm, fee: Number(event.target.value) })
+                  }
+                  placeholder="0"
+                />
+              </label>
+            )}
+
             <label className="projects-field">
               Reference
               <input
@@ -1134,7 +1201,7 @@ export default function Expenses() {
                   {selectedExpense.payments.map((payment) => (
                     <tr key={payment.id}>
                       <td className="money-cell">{payment.date}</td>
-                      <td>{payment.method}</td>
+                      <td>{payment.method}{payment.fee ? <span className="exp-sub">MoMo fee {money(payment.fee)}</span> : null}</td>
                       <td>{payment.reference || '—'}</td>
                       <td className="money-cell">
                         <strong>{money(payment.amount)}</strong>
