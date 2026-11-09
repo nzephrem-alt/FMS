@@ -1,18 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Download, Printer, CheckCircle2, AlertTriangle, TrendingUp, TrendingDown, Wallet, Activity } from 'lucide-react';
+import { Download, Printer, CheckCircle2, AlertTriangle, TrendingUp, TrendingDown, Wallet, Activity, FileDown } from 'lucide-react';
 import { ACC, ACCOUNTS, getAccount, isDebitNormal, isDirectCost } from '../lib/accounts';
 import type { Account, AccountType } from '../lib/accounts';
 import { syncStoredInvoices, syncStoredProjectCosts } from '../lib/postings';
 import { useLedgerEntries } from '../lib/useLedger';
 import type { JournalEntry } from '../lib/ledger';
+import { useAccess } from '../lib/access';
+import { buildReport, rwf, shortDay } from '../lib/weeklyReport';
+import type { WRCost, WRLabour } from '../lib/weeklyReport';
 
 const PROJECTS_KEY = 'ista-fortis-projects-v1';
 const INVOICES_KEY = 'ista-fortis-invoices-v1';
+const COSTS_KEY = 'ista-fortis-project-costs-v1';
+const LABOUR_KEY = 'ista-fortis-site-labour-v1';
 const CASH_CODES: string[] = [ACC.cash, ACC.bank, ACC.mobileMoney];
 
-type TabId = 'income' | 'balance' | 'cashflow' | 'projects' | 'receivables' | 'trial';
-type PresetId = 'month' | 'lastMonth' | 'quarter' | 'year' | 'lastYear' | 'all' | 'custom';
+type TabId = 'income' | 'balance' | 'cashflow' | 'projects' | 'receivables' | 'trial' | 'weekly';
+type PresetId = 'week' | 'lastWeek' | 'month' | 'lastMonth' | 'quarter' | 'year' | 'lastYear' | 'all' | 'custom';
 type CsvRow = (string | number)[];
 type Line = { code: string; name: string; amount: number };
 type Totals = Map<string, { debit: number; credit: number }>;
@@ -26,9 +31,12 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'projects', label: 'Project profitability' },
   { id: 'receivables', label: 'Receivables & payables' },
   { id: 'trial', label: 'Trial balance' },
+  { id: 'weekly', label: 'Weekly report' },
 ];
 
 const PRESETS: { id: PresetId; label: string }[] = [
+  { id: 'week', label: 'This week' },
+  { id: 'lastWeek', label: 'Last week' },
   { id: 'month', label: 'This month' },
   { id: 'lastMonth', label: 'Last month' },
   { id: 'quarter', label: 'This quarter' },
@@ -66,7 +74,10 @@ const daysBetween = (a: string, b: string) => Math.floor((Date.parse(`${a}T00:00
 function rangeFor(preset: PresetId, now: Date): { from: string; to: string } {
   const y = now.getFullYear();
   const m = now.getMonth();
+  const monday = now.getDate() - ((now.getDay() + 6) % 7); // weeks run Monday to Sunday
   switch (preset) {
+    case 'week': return { from: iso(new Date(y, m, monday)), to: iso(new Date(y, m, monday + 6)) };
+    case 'lastWeek': return { from: iso(new Date(y, m, monday - 7)), to: iso(new Date(y, m, monday - 1)) };
     case 'month': return { from: iso(new Date(y, m, 1)), to: iso(new Date(y, m + 1, 0)) };
     case 'lastMonth': return { from: iso(new Date(y, m - 1, 1)), to: iso(new Date(y, m, 0)) };
     case 'quarter': { const q = Math.floor(m / 3) * 3; return { from: iso(new Date(y, q, 1)), to: iso(new Date(y, q + 3, 0)) }; }
@@ -82,6 +93,17 @@ function readList<T>(key: string): T[] {
     const data = raw ? JSON.parse(raw) : [];
     return Array.isArray(data) ? data as T[] : [];
   } catch { return []; }
+}
+
+function readLabour(): { entries: WRLabour[]; activities: Record<string, string> } {
+  try {
+    const raw = localStorage.getItem(LABOUR_KEY);
+    const v = raw ? JSON.parse(raw) : null;
+    return {
+      entries: Array.isArray(v?.entries) ? v.entries as WRLabour[] : [],
+      activities: v?.activities && typeof v.activities === 'object' ? v.activities as Record<string, string> : {},
+    };
+  } catch { return { entries: [], activities: {} }; }
 }
 
 function sumAccounts(entries: readonly JournalEntry[], from: string, to: string): Totals {
@@ -236,6 +258,14 @@ const REPORTS_CSS = `
 .projects-module .rep-subhead{margin:16px 14px 6px}
 .projects-module .rep-check,.projects-module .rep-note{margin:12px 14px}
 }
+.projects-module .wr-summary{margin:0 20px 14px;font-size:12.5px;line-height:1.7;color:#3b4a42}
+.projects-module .wr-day td:first-child{white-space:nowrap;font-weight:600;color:var(--ink)}
+.projects-module .wr-issues{margin:0 20px 14px;padding-left:18px;font-size:12px;line-height:1.7;color:#3b4a42}
+.projects-module .wr-priorities{display:block;margin:0 20px 18px;font-size:11.5px;color:var(--muted)}
+.projects-module .wr-priorities textarea{display:block;width:100%;box-sizing:border-box;margin-top:6px;min-height:96px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;font:inherit;font-size:12.5px;color:var(--ink);resize:vertical}
+.projects-module .wr-priorities textarea:focus{outline:none;border-color:#1a9e6f;box-shadow:0 0 0 3px #1a9e6f22}
+.projects-module .rep-card-head.wr-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+@media(max-width:600px){.projects-module .wr-summary,.projects-module .wr-issues{margin-left:14px;margin-right:14px}.projects-module .wr-priorities{margin:0 14px 16px}.projects-module .rep-card-head.wr-head .primary-button{width:100%;justify-content:center}}
 @media(prefers-reduced-motion:reduce){.pj-kpi{transition:none}.pj-kpi:hover{transform:none}}
 @media print{.projects-module{gap:12px}.pj-kpi,.projects-module .rep-card{box-shadow:none;transform:none}.projects-module .rep-card{border:0;border-radius:0}.pj-kpi,.projects-module .rep-grand td,.projects-module .rep-total td,.projects-module .rep-check{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 `;
@@ -247,6 +277,11 @@ export default function FinancialReports() {
   const entries = useLedgerEntries();
   const projects = useMemo(() => readList<ProjectRow>(PROJECTS_KEY), []);
   const invoices = useMemo(() => readList<InvoiceRow>(INVOICES_KEY), []);
+  const costs = useMemo(() => readList<WRCost>(COSTS_KEY), []);
+  const labour = useMemo(() => readLabour(), []);
+  const { name: preparedBy } = useAccess();
+  const [priorities, setPriorities] = useState('');
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const [tab, setTab] = useState<TabId>('income');
   const [preset, setPreset] = useState<PresetId>('year');
@@ -263,6 +298,12 @@ export default function FinancialReports() {
   const editDate = (key: 'from' | 'to', value: string) => {
     setPreset('custom');
     setRange(r => ({ ...r, [key]: value }));
+  };
+
+  const openTab = (t: TabId) => {
+    setTab(t);
+    // The weekly report needs both dates; start it on the current week.
+    if (t === 'weekly' && (!range.from || !range.to)) choosePreset('week');
   };
 
   const periodLabel = range.from && range.to ? `${prettyDate(range.from)} to ${prettyDate(range.to)}`
@@ -417,11 +458,24 @@ export default function FinancialReports() {
     };
   }, [data.projectRows]);
 
+  const weekly = useMemo(() => (range.from && range.to && range.from <= range.to
+    ? buildReport({ from: range.from, to: range.to, projects, costs, labour: labour.entries, activities: labour.activities, invoices, entries })
+    : null), [range.from, range.to, projects, costs, labour, invoices, entries]);
+
+  const downloadWeekly = async () => {
+    if (!weekly) return;
+    setPdfBusy(true);
+    try {
+      const { downloadWeeklyReportPdf } = await import('../lib/weeklyReportPdf');
+      await downloadWeeklyReportPdf(weekly, range.from, range.to, preparedBy, priorities);
+    } finally { setPdfBusy(false); }
+  };
+
   const totalExpenses = data.totalDirect + data.totalOpex;
   const noEntries = entries.length === 0;
   const tabLabel = TABS.find(t => t.id === tab)?.label ?? '';
   const asAtTabs = tab === 'balance' || tab === 'trial' || tab === 'receivables';
-  const subtitle = asAtTabs ? `As at ${prettyDate(asAt)}` : tab === 'projects' ? `Costs to ${prettyDate(asAt)}` : periodLabel;
+  const subtitle = tab === 'weekly' && weekly ? weekly.periodLabel : asAtTabs ? `As at ${prettyDate(asAt)}` : tab === 'projects' ? `Costs to ${prettyDate(asAt)}` : periodLabel;
 
   const exportCSV = () => {
     let rows: CsvRow[] = [];
@@ -464,6 +518,13 @@ export default function FinancialReports() {
       rows = [['Client balances (ledger)'], ['Client', 'Balance'], ...data.clientBalances.map((r): CsvRow => [r.name, r.amount]), [],
         ['Invoice ageing (today)'], ['Bucket', 'Invoices', 'Amount'], ...ageing.buckets.map((b): CsvRow => [b.label, b.count, b.amount]), [],
         ['Supplier balances (ledger)'], ['Supplier', 'Balance'], ...data.supplierBalances.map((r): CsvRow => [r.name, r.amount])];
+    } else if (tab === 'weekly') {
+      if (!weekly) return;
+      rows = [['Summary'], [weekly.summary], [], ['Project ID', 'Project', 'Work', 'Cost'],
+        ...weekly.projects.map((p): CsvRow => [p.id, p.name, p.work, p.cost]), ['', 'Total', '', weekly.total], [],
+        ['Daily activities'], ['Date', 'Project', 'Activity', 'Description / notes', 'Cost'],
+        ...weekly.days.flatMap(d => d.rows.map((r): CsvRow => [d.date, r.project, r.activity, r.description, r.amount])), [],
+        ['Issues to follow up'], ...weekly.issues.map((i): CsvRow => [i])];
     } else {
       rows = [['Code', 'Account', 'Type', 'Debit', 'Credit'],
         ...data.trialRows.map((r): CsvRow => [r.code, r.name, r.type, r.debit, r.credit]),
@@ -524,7 +585,7 @@ export default function FinancialReports() {
         <label className="rep-field">To
           <input type="date" value={range.to} onChange={e => editDate('to', e.target.value)} />
         </label>
-        <p className="rep-hint">{asAtTabs ? 'This report is as at the "To" date (today if empty).' : tab === 'projects' ? 'Costs are counted up to the "To" date.' : 'Shows activity between the two dates.'}</p>
+        <p className="rep-hint">{tab === 'weekly' ? 'Pick a week, or choose any From and To dates.' : asAtTabs ? 'This report is as at the "To" date (today if empty).' : tab === 'projects' ? 'Costs are counted up to the "To" date.' : 'Shows activity between the two dates.'}</p>
       </div>
       {rangeInvalid && <p className="rep-warning no-print" role="alert"><AlertTriangle size={15} /> The start date is after the end date, so no figures can be shown.</p>}
 
@@ -537,11 +598,65 @@ export default function FinancialReports() {
 
       <div className="rep-tabs no-print" role="tablist" aria-label="Reports">
         {TABS.map(t => (
-          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={`rep-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>{t.label}</button>
+          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={`rep-tab${tab === t.id ? ' active' : ''}`} onClick={() => openTab(t.id)}>{t.label}</button>
         ))}
       </div>
 
-      <div className="panel rep-card" role="tabpanel">
+      {tab === 'weekly' && (
+        <div className="panel rep-card" role="tabpanel">
+          <div className="rep-card-head wr-head">
+            <div><div className="eyebrow">REPORT VIEW</div><h3>{weekly ? (weekly.title === 'WEEKLY REPORT' ? 'Weekly report' : 'Activity report') : 'Weekly report'}</h3><p>{weekly ? `${weekly.periodLabel} | Prepared by ${preparedBy}` : 'Choose a From and a To date.'}</p></div>
+            {weekly && <button type="button" className="primary-button no-print" onClick={downloadWeekly} disabled={pdfBusy}><FileDown size={16} /> {pdfBusy ? 'Preparing…' : 'Download PDF'}</button>}
+          </div>
+          {!weekly && <div className="rep-empty">Choose both a From and a To date to see the report.</div>}
+          {weekly && (
+            <>
+              <h4 className="rep-subhead">1. Summary</h4>
+              <p className="wr-summary">{weekly.summary}</p>
+              {weekly.projects.length > 0 && (
+                <div className="rep-scroll">
+                  <table className="rep-table">
+                    <thead><tr><th>Project</th><th>{weekly.periodWord === 'this week' ? 'Work this week' : 'Work in this period'}</th><th className="num">Cost</th></tr></thead>
+                    <tbody>
+                      {weekly.projects.map(p => <tr key={p.id}><td><strong>{p.name}</strong><span className="rep-sub">{p.id}</span></td><td>{p.work}</td><td className="num">{rwf(p.cost)}</td></tr>)}
+                      <tr className="rep-grand final"><td colSpan={2}>Total</td><td className="num">{rwf(weekly.total)}</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <h4 className="rep-subhead">2. Daily activities</h4>
+              {weekly.days.length === 0 ? <div className="rep-empty">No site entries recorded.</div> : (
+                <div className="rep-scroll">
+                  <table className="rep-table rep-wide">
+                    <thead><tr><th>Date</th><th>Project</th><th>Activity</th><th>Description / notes</th><th className="num">Cost</th></tr></thead>
+                    <tbody>
+                      {weekly.days.map(d => d.rows.length === 0
+                        ? <tr key={d.date} className="wr-day rep-none"><td>{shortDay(d.date)}</td><td colSpan={4}>No site entries recorded</td></tr>
+                        : d.rows.map((r, i) => (
+                          <tr key={`${d.date}-${i}`} className="wr-day"><td>{i === 0 ? shortDay(d.date) : ''}</td><td>{r.project}</td><td>{r.activity}</td><td>{r.description}</td><td className="num">{rwf(r.amount)}</td></tr>
+                        )))}
+                      <tr className="rep-grand final"><td colSpan={4}>Total</td><td className="num">{rwf(weekly.total)}</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <h4 className="rep-subhead">3. Issues to follow up</h4>
+              {weekly.issues.length === 0 ? <p className="wr-summary">Nothing to follow up.</p> : (
+                <ul className="wr-issues">{weekly.issues.map((issue, i) => <li key={i}>{issue}</li>)}</ul>
+              )}
+
+              <h4 className="rep-subhead">4. {weekly.periodWord === 'this week' ? 'Next week priorities' : 'Next priorities'}</h4>
+              <label className="wr-priorities">One priority per line. These are added to the PDF.
+                <textarea value={priorities} onChange={e => setPriorities(e.target.value)} placeholder={'Complete foundation works\nCollect payment from client'} />
+              </label>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab !== 'weekly' && <div className="panel rep-card" role="tabpanel">
         <div className="rep-card-head">
           <div><div className="eyebrow">REPORT VIEW</div><h3>{tabLabel}</h3><p>{subtitle}</p></div>
         </div>
@@ -694,7 +809,7 @@ export default function FinancialReports() {
             </p>
           </>
         )}
-      </div>
+      </div>}
 
       <p className="rep-source no-print">Reports are generated from the general ledger as it stands now. Corrections are made by reversing entries, so earlier figures are never overwritten.</p>
     </section>
