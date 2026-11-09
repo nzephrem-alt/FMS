@@ -6,7 +6,9 @@ import {
 } from 'lucide-react';
 import { ACC } from '../lib/accounts';
 import { ledger, auditLog } from '../lib/ledger';
-import { cashAccountFor } from '../lib/postings';
+import { cashAccountFor, postProjectCost } from '../lib/postings';
+
+const COSTS_KEY = 'ista-fortis-project-costs-v1';
 import { LABOUR_TYPES, detectLabourType } from '../lib/costImport';
 import { useAccess } from '../lib/access';
 
@@ -23,7 +25,7 @@ type Store = { entries: LabourEntry[]; activities: Record<string, string> };
 type ProjectOption = { id: string; projectName: string; client?: string };
 type DayRow = { key: string; id?: string; worker: string; category: string; rate: number; paid?: PaidInfo; customType?: boolean };
 type Editor = { date: string; activity: string; rows: DayRow[] };
-type PayDialog = { ids: string[]; method: Method; date: string };
+type PayDialog = { ids: string[]; method: Method; date: string; fee: string };
 type PrintMode = { kind: 'week' } | { kind: 'day'; date: string };
 
 const STORE_KEY = 'ista-fortis-site-labour-v1';
@@ -441,7 +443,7 @@ export default function SiteLabour() {
   /* ---------- paying ---------- */
   const openPay = (ids: string[]) => {
     if (!ids.length) return;
-    setPayDialog({ ids, method: payMethod, date: today });
+    setPayDialog({ ids, method: payMethod, date: today, fee: '' });
     setPayError('');
   };
   const payEntries = payDialog ? store.entries.filter((e) => payDialog.ids.includes(e.id) && !e.paid) : [];
@@ -449,6 +451,8 @@ export default function SiteLabour() {
   const confirmPay = () => {
     if (!payDialog) return;
     if (!isValidIso(payDialog.date)) { setPayError('Choose a valid payment date.'); return; }
+    const fee = payDialog.method === 'Mobile money' ? Number(payDialog.fee || 0) : 0;
+    if (!Number.isInteger(fee) || fee < 0) { setPayError('Enter the MoMo fee in whole RWF, or leave it empty if there was none.'); return; }
     const done: Record<string, PaidInfo> = {};
     let failure = '';
     for (const e of payEntries) {
@@ -462,10 +466,35 @@ export default function SiteLabour() {
       setStore((old) => ({ ...old, entries: old.entries.map((e) => (done[e.id] ? { ...e, paid: done[e.id] } : e)) }));
       const total = payEntries.filter((e) => done[e.id]).reduce((s, e) => s + e.rate, 0);
       audit('site_labour.paid', projectId, `Paid ${count} site labour day${count === 1 ? '' : 's'} (${money(total)}) by ${payDialog.method}`, { ids: Object.keys(done), method: payDialog.method, date: payDialog.date, total });
-      setNotice(`Marked ${count} worker-day${count === 1 ? '' : 's'} as paid (${money(total)}) by ${payDialog.method}.`);
+      const feeNote = fee > 0 ? recordMomoFee(fee, count, payDialog.date) : '';
+      setNotice(`Marked ${count} worker-day${count === 1 ? '' : 's'} as paid (${money(total)}) by ${payDialog.method}.${feeNote}`);
     }
     if (failure) { setPayError(`Paid ${count} of ${payEntries.length}. Stopped because: ${failure}`); return; }
     setPayDialog(null);
+  };
+
+  /**
+   * The mobile money fee for one payment is a single amount. It is recorded once, as a Labour cost
+   * of the project on Project Costs (paid by mobile money), so it counts in the project's labour cost.
+   * Returns a sentence for the notice.
+   */
+  const recordMomoFee = (fee: number, workers: number, date: string): string => {
+    try {
+      const costs: { id: string }[] = JSON.parse(localStorage.getItem(COSTS_KEY) || '[]');
+      const list = Array.isArray(costs) ? costs : [];
+      const next = list.reduce((max, c) => { const m = /^CST-(\d+)$/.exec(c.id); return m ? Math.max(max, Number(m[1])) : max; }, 0) + 1;
+      const record = {
+        id: `CST-${String(next).padStart(4, '0')}`, projectId, projectName: project?.projectName ?? projectId, date,
+        category: 'Labour', labourType: '', description: `MoMo fee · site labour payment (${workers} worker${workers === 1 ? '' : 's'})`,
+        supplier: '', amount: fee, amountPaid: fee, paymentMethod: 'Mobile money', reference: '', notes: '',
+        reversed: false, createdAt: new Date().toISOString(),
+      };
+      postProjectCost(record); // LEDGER: labour cost of the project, paid from mobile money
+      localStorage.setItem(COSTS_KEY, JSON.stringify([record, ...list]));
+      return ` The ${money(fee)} MoMo fee is recorded as ${record.id} on Project Costs.`;
+    } catch (err) {
+      return ` The MoMo fee could not be recorded (${errText(err, 'ledger error')}). Record it on Project Costs instead.`;
+    }
   };
 
   const unpay = (e: LabourEntry) => {
@@ -616,7 +645,7 @@ export default function SiteLabour() {
             </table>
           </div>
         )}
-        
+        {workers.length > 0 && <p className="sl-foot-note">A paid day is recorded as a labour cost on the work date and as money paid on the payment date. Removing a payment posts reversing entries, so the history stays complete.</p>}
       </div>
 
       {/* ---------- day editor ---------- */}
@@ -692,6 +721,7 @@ export default function SiteLabour() {
             <div className="sl-stack">
               <label className="projects-field">Paid from<select value={payDialog.method} onChange={(e) => setPayDialog({ ...payDialog, method: e.target.value as Method })}>{METHODS.map((m) => <option key={m}>{m}</option>)}</select></label>
               <label className="projects-field">Payment date<input type="date" value={payDialog.date} onChange={(e) => setPayDialog({ ...payDialog, date: e.target.value })} /></label>
+              {payDialog.method === 'Mobile money' && <label className="projects-field">MoMo fee (RWF){payEntries.length > 1 ? ', one amount for this payment' : ''}<input type="number" min="0" step="1" value={payDialog.fee} onChange={(e) => setPayDialog({ ...payDialog, fee: e.target.value })} placeholder="0" /></label>}
               {payError && <p className="projects-validation" role="alert">{payError}</p>}
             </div>
             <div className="projects-form-actions">
