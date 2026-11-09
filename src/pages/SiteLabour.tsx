@@ -234,6 +234,8 @@ const LABOUR_CSS = `
 .projects-module .sl-editor-tools{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .projects-module .sl-editor-total{margin-top:14px;padding:12px 14px;border-radius:12px;background:#eef8f2;color:#3f5a4c;font-size:12.5px;display:flex;flex-wrap:wrap;gap:6px 18px}
 .projects-module .sl-help{margin:8px 0 0;font-size:11px;color:var(--muted);line-height:1.5}
+.projects-module .sl-pay-many{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}
+@media(max-width:600px){.projects-module .sl-pay-many{width:100%}.projects-module .sl-pay-many>button{flex:1 1 100%;justify-content:center}}
 .projects-module .sl-pay-info{margin:0 0 14px;padding:12px 14px;border-radius:12px;background:#fde5c4;color:#7a4c14;font-size:12.5px;line-height:1.6}
 .projects-module .sl-stack{display:grid;gap:12px}
 
@@ -355,6 +357,7 @@ export default function SiteLabour() {
   const weekPaid = sum(weekEntries.filter((e) => e.paid));
   const weekAwaiting = weekTotal - weekPaid;
   const allAwaiting = projectEntries.filter((e) => !e.paid);
+  const weekUnpaid = weekEntries.filter((e) => !e.paid);
   const knownWorkers = useMemo(() => {
     const seen = new Map<string, string>();
     [...projectEntries].sort((a, b) => b.date.localeCompare(a.date)).forEach((e) => { if (!seen.has(norm(e.worker))) seen.set(norm(e.worker), e.worker); });
@@ -447,6 +450,7 @@ export default function SiteLabour() {
     setPayError('');
   };
   const payEntries = payDialog ? store.entries.filter((e) => payDialog.ids.includes(e.id) && !e.paid) : [];
+  const payDays = [...new Set(payEntries.map((e) => e.date))].sort();
 
   const confirmPay = () => {
     if (!payDialog) return;
@@ -565,8 +569,18 @@ export default function SiteLabour() {
         <div className="panel-heading projects-heading">
           <div>
             <h3>{project ? project.projectName : 'Labour sheet'}</h3>
-            <p>Tick a worker's day once it is approved and paid. Use "Pay all" to pay everyone still unpaid on a day. Paid days are posted to the ledger as Direct Labour on this project.</p>
+            <p>Tick a worker's day once it is approved and paid. Use "Pay all" to pay everyone still unpaid on a day, or pay a whole week or everything awaiting at once. Paid days are posted to the ledger as Direct Labour on this project.</p>
           </div>
+          {isAdmin && (weekUnpaid.length > 0 || allAwaiting.length > 0) && (
+            <div className="sl-pay-many">
+              <button type="button" className="projects-secondary-button" onClick={() => openPay(weekUnpaid.map((e) => e.id))} disabled={!weekUnpaid.length}>
+                <Wallet size={15} /> Pay this week{weekUnpaid.length ? ` (${money(sum(weekUnpaid))})` : ''}
+              </button>
+              <button type="button" className="primary-button" onClick={() => openPay(allAwaiting.map((e) => e.id))} disabled={!allAwaiting.length}>
+                <Wallet size={15} /> Pay all awaiting{allAwaiting.length ? ` (${money(sum(allAwaiting))})` : ''}
+              </button>
+            </div>
+          )}
         </div>
 
         {projects.length === 0 ? (
@@ -714,10 +728,10 @@ export default function SiteLabour() {
         <div className="projects-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setPayDialog(null); }}>
           <section className="projects-modal" style={{ width: 'min(440px,100%)' }} role="dialog" aria-modal="true" aria-labelledby="sl-pay-title">
             <div className="projects-modal-header">
-              <div><div className="eyebrow">MARK AS PAID</div><h3 id="sl-pay-title">{payEntries.length === 1 ? `${payEntries[0].worker} · ${longDate(payEntries[0].date)}` : `${payEntries.length} workers`}</h3></div>
+              <div><div className="eyebrow">MARK AS PAID</div><h3 id="sl-pay-title">{payEntries.length === 1 ? `${payEntries[0].worker} · ${longDate(payEntries[0].date)}` : payDays.length > 1 ? `${payEntries.length} worker-days · ${payDays.length} days` : `${payEntries.length} workers`}</h3></div>
               <button type="button" className="projects-close" onClick={() => setPayDialog(null)} aria-label="Close"><X size={19} /></button>
             </div>
-            <p className="sl-pay-info">Amount to pay: <strong>{money(sum(payEntries))}</strong>{payEntries.length > 1 && <> for {payEntries.length} workers</>}{payEntries.length === 1 && <> · {payEntries[0].category}</>}</p>
+            <p className="sl-pay-info">Amount to pay: <strong>{money(sum(payEntries))}</strong>{payEntries.length > 1 && <> for {payEntries.length} {payDays.length > 1 ? `worker-days, ${shortDate(payDays[0])} – ${longDate(payDays[payDays.length - 1])}` : 'workers'}</>}{payEntries.length === 1 && <> · {payEntries[0].category}</>}</p>
             <div className="sl-stack">
               <label className="projects-field">Paid from<select value={payDialog.method} onChange={(e) => setPayDialog({ ...payDialog, method: e.target.value as Method })}>{METHODS.map((m) => <option key={m}>{m}</option>)}</select></label>
               <label className="projects-field">Payment date<input type="date" value={payDialog.date} onChange={(e) => setPayDialog({ ...payDialog, date: e.target.value })} /></label>
