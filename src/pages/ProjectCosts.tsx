@@ -19,6 +19,8 @@ type ProjectCost = {
   description: string; supplier: string; amount: number; amountPaid: number;
   paymentMethod: PaymentMethod; reference: string; notes: string; reversed: boolean;
   reversedAt?: string; createdAt: string;
+  /** Mobile money fee paid with the amount paid at recording (part of the project's cost). */
+  momoFee?: number;
 };
 type ProjectOption = { id: string; projectName: string; client?: string; location?: string };
 type CostForm = Omit<ProjectCost, 'id' | 'reversed' | 'reversedAt' | 'createdAt'>;
@@ -77,10 +79,11 @@ function statusIcon(cost: ProjectCost) {
  * scoped under .projects-module, so they restyle this page (and its pop-ups) only.
  */
 /* ---------- later payments of a cost (read from the ledger) ---------- */
-type CostPayment = { entryId: string; date: string; amount: number; method: string; reference: string };
+type CostPayment = { entryId: string; date: string; amount: number; fee: number; method: string; reference: string };
+const FEE_MEMO = 'Mobile money fee';
 const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const payMethods: PaymentMethod[] = ['Cash', 'Bank transfer', 'Mobile money', 'Cheque'];
-const blankPay = () => ({ amount: '', date: localToday(), method: 'Bank transfer' as PaymentMethod, reference: '' });
+const blankPay = () => ({ amount: '', fee: '', date: localToday(), method: 'Bank transfer' as PaymentMethod, reference: '' });
 
 /** Payments made after a cost was recorded. Undone payments are left out. */
 function laterPayments(costId: string): CostPayment[] {
@@ -91,11 +94,25 @@ function laterPayments(costId: string): CostPayment[] {
     .map(e => ({
       entryId: e.id,
       date: e.date,
-      amount: e.lines.reduce((s, l) => s + l.debit, 0),
-      method: e.lines.find(l => l.credit > 0)?.memo || '—',
+      amount: e.lines.filter(l => l.memo !== FEE_MEMO).reduce((s, l) => s + l.debit, 0),
+      fee: e.lines.filter(l => l.memo === FEE_MEMO).reduce((s, l) => s + l.debit, 0),
+      method: e.lines.find(l => l.credit > 0 && l.memo !== FEE_MEMO)?.memo || '—',
       reference: e.reference || '',
     }));
 }
+/** MoMo fees of later payments, per cost (undone payments left out). */
+function laterFeesByCost(): Map<string, number> {
+  const entries: readonly JournalEntry[] = ledger.getEntries();
+  const undone = new Set(entries.filter(e => e.reversalOf).map(e => e.reversalOf as string));
+  const map = new Map<string, number>();
+  entries.forEach(e => {
+    if (e.sourceType !== 'cost_payment' || e.reversalOf || undone.has(e.id)) return;
+    const fee = e.lines.filter(l => l.memo === FEE_MEMO).reduce((s, l) => s + l.debit, 0);
+    if (fee) map.set(e.sourceId, (map.get(e.sourceId) ?? 0) + fee);
+  });
+  return map;
+}
+
 /** Next payment number for a cost, counting undone payments too, so every posting stays unique. */
 const nextPaymentNo = (costId: string) =>
   ledger.getEntries().filter(e => e.sourceType === 'cost_payment' && e.sourceId === costId && !e.reversalOf).length + 1;
@@ -240,6 +257,9 @@ export default function ProjectCosts() {
   }, []);
 
   const activeCosts = costs.filter(c => !c.reversed);
+  // Mobile money fees count as part of a cost: the fee paid when recorded plus fees on later payments.
+  const laterFees = useMemo(() => laterFeesByCost(), [costs]);
+  const feesOf = (c: ProjectCost) => (c.momoFee ?? 0) + (laterFees.get(c.id) ?? 0);
 
   // Site labour per project: everything recorded on the Site Labour page, paid or awaiting payment.
   const siteByProject = useMemo(() => {
@@ -270,12 +290,12 @@ export default function ProjectCosts() {
   const usedLabourTypes = useMemo(() => [...new Set([...costs.map(c => c.labourType ?? ''), ...labourDays.flatMap(d => d.types)].filter(Boolean))].sort(), [costs, labourDays]);
   const labourOptions = useMemo(() => [...new Set([...LABOUR_TYPES, ...usedLabourTypes])], [usedLabourTypes]);
   const totals = useMemo(() => ({
-    total: activeCosts.reduce((s, c) => s + c.amount, 0) + site.total,
-    paid: activeCosts.reduce((s, c) => s + c.amountPaid, 0) + site.paid,
+    total: activeCosts.reduce((s, c) => s + c.amount + feesOf(c), 0) + site.total,
+    paid: activeCosts.reduce((s, c) => s + c.amountPaid + feesOf(c), 0) + site.paid,
     payable: activeCosts.reduce((s, c) => s + Math.max(c.amount - c.amountPaid, 0), 0) + (site.total - site.paid),
     count: activeCosts.length,
     projectsWithCosts: new Set([...activeCosts.map(c => c.projectId), ...siteByProject.keys()]).size,
-  }), [costs, site, siteByProject]);
+  }), [costs, site, siteByProject, laterFees]);
 
   const paidPct = totals.total > 0 ? Math.round((totals.paid / totals.total) * 100) : 0;
 
@@ -285,7 +305,8 @@ export default function ProjectCosts() {
     projects.forEach(p => map.set(p.id, { id: p.id, name: p.projectName, count: 0, total: 0, paid: 0, siteDays: 0, site: 0 }));
     costs.filter(c => !c.reversed).forEach(c => {
       const row = map.get(c.projectId) ?? { id: c.projectId, name: c.projectName, count: 0, total: 0, paid: 0, siteDays: 0, site: 0 };
-      row.count += 1; row.total += c.amount; row.paid += c.amountPaid;
+      const fee = (c.momoFee ?? 0) + (laterFees.get(c.id) ?? 0);
+      row.count += 1; row.total += c.amount + fee; row.paid += c.amountPaid + fee;
       map.set(c.projectId, row);
     });
     siteByProject.forEach((s, projectId) => {
@@ -294,7 +315,7 @@ export default function ProjectCosts() {
       map.set(projectId, row);
     });
     return [...map.values()].sort((a, b) => b.total - a.total);
-  }, [costs, projects, siteByProject]);
+  }, [costs, projects, siteByProject, laterFees]);
 
   const visibleRows = useMemo((): RegisterRow[] => {
     const q = search.trim().toLowerCase();
@@ -345,8 +366,10 @@ export default function ProjectCosts() {
     if (!Number.isInteger(form.amount) || !Number.isInteger(form.amountPaid) || form.amount <= 0 || form.amountPaid < 0 || form.amountPaid > form.amount) {
       setError('Enter whole RWF amounts. Amount paid cannot exceed the total cost.'); return;
     }
+    const fee = form.paymentMethod === 'Mobile money' && form.amountPaid > 0 ? (form.momoFee ?? 0) : 0;
+    if (!Number.isInteger(fee) || fee < 0) { setError('Enter the MoMo fee in whole RWF, or 0 if there was none.'); return; }
     const nextNo = costs.reduce((max, c) => { const m = c.id.match(/^CST-(\d+)$/); return m ? Math.max(max, Number(m[1])) : max; }, 0) + 1;
-    const record: ProjectCost = { ...form, labourType: form.category === 'Labour' ? (form.labourType ?? '').trim() : '', projectName: project.projectName, id: `CST-${String(nextNo).padStart(4, '0')}`, reversed: false, createdAt: new Date().toISOString() };
+    const record: ProjectCost = { ...form, momoFee: fee || undefined, labourType: form.category === 'Labour' ? (form.labourType ?? '').trim() : '', projectName: project.projectName, id: `CST-${String(nextNo).padStart(4, '0')}`, reversed: false, createdAt: new Date().toISOString() };
     // LEDGER: post first, so a cost is never saved without its journal entry
     try { postProjectCost(record); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not post to the ledger.'); return; }
@@ -374,16 +397,18 @@ export default function ProjectCosts() {
     const amount = Number(pay.amount); const balance = payFor.amount - payFor.amountPaid;
     if (!Number.isInteger(amount) || amount <= 0 || amount > balance) { setPayError(`Enter a whole RWF amount greater than zero and no more than ${money(balance)}.`); return; }
     if (!pay.date) { setPayError('Choose the date the payment was made.'); return; }
+    const fee = pay.method === 'Mobile money' ? Number(pay.fee || 0) : 0;
+    if (!Number.isInteger(fee) || fee < 0) { setPayError('Enter the MoMo fee in whole RWF, or leave it empty if there was none.'); return; }
     // LEDGER: post first, so the cost is never marked paid without its journal entry
     try {
-      postCostPayment({ costId: payFor.id, paymentNo: nextPaymentNo(payFor.id), date: pay.date, supplier: payFor.supplier, amount, method: pay.method, reference: pay.reference.trim() || undefined });
+      postCostPayment({ costId: payFor.id, paymentNo: nextPaymentNo(payFor.id), date: pay.date, supplier: payFor.supplier, amount, method: pay.method, reference: pay.reference.trim() || undefined, fee, projectId: payFor.projectId, category: payFor.category });
     } catch (e) { setPayError(e instanceof Error ? e.message : 'Could not post the payment to the ledger.'); return; }
     applyPaid(payFor.id, amount);
-    setNotice(`Payment of ${money(amount)} recorded for ${payFor.id}.`);
+    setNotice(`Payment of ${money(amount)}${fee ? ` (+ ${money(fee)} MoMo fee)` : ''} recorded for ${payFor.id}.`);
     closePay();
   };
   const undoPayment = (cost: ProjectCost, p: CostPayment) => {
-    if (!window.confirm(`Undo the payment of ${money(p.amount)} made on ${p.date}? A reversing entry is posted and the amount becomes due again.`)) return;
+    if (!window.confirm(`Undo the payment of ${money(p.amount)}${p.fee ? ` (and its ${money(p.fee)} MoMo fee)` : ''} made on ${p.date}? A reversing entry is posted and the amount becomes due again.`)) return;
     // LEDGER: reverse on the payment's own date, so each period stays correct
     try { ledger.reverse(p.entryId, `Payment for ${cost.id} undone`, p.date); }
     catch (e) { window.alert(e instanceof Error ? e.message : 'Could not undo the payment in the ledger.'); return; }
@@ -531,7 +556,7 @@ export default function ProjectCosts() {
                 <td style={{ minWidth: 180 }}><strong>{c.projectName}</strong><span className="cost-sub">{c.description}</span></td>
                 <td>{c.category}{c.category === 'Labour' && c.labourType && <span className="cost-sub">{c.labourType}</span>}</td>
                 <td>{c.supplier || '—'}</td>
-                <td className="money-cell"><strong>{money(c.amount)}</strong></td>
+                <td className="money-cell"><strong>{money(c.amount)}</strong>{feesOf(c) > 0 && <span className="cost-sub">+ {money(feesOf(c))} MoMo fee</span>}</td>
                 <td><div className="received-cell"><strong>{money(c.amountPaid)}</strong><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><small>{progress.toFixed(0)}% paid</small></div></td>
                 <td className="money-cell">{money(due)}</td>
                 <td><span className={`project-status ${statusClass(c)}`}>{statusIcon(c)}{c.reversed ? 'Reversed' : paymentStatusOf(c)}</span></td>
@@ -557,6 +582,7 @@ export default function ProjectCosts() {
             <label className="projects-field">Total cost (RWF) *<input required type="number" min="1" step="1" value={form.amount || ''} onChange={e => setField('amount', Number(e.target.value))} /></label>
             <label className="projects-field">Amount paid (RWF)<input type="number" min="0" step="1" value={form.amountPaid || ''} onChange={e => setField('amountPaid', Number(e.target.value))} /></label>
             <label className="projects-field">Payment method<select value={form.paymentMethod} onChange={e => setField('paymentMethod', e.target.value as PaymentMethod)}>{methods.map(m => <option key={m}>{m}</option>)}</select></label>
+            {form.paymentMethod === 'Mobile money' && form.amountPaid > 0 && <label className="projects-field">MoMo fee (RWF)<input type="number" min="0" step="1" value={form.momoFee || ''} onChange={e => setField('momoFee', Number(e.target.value))} placeholder="0" /></label>}
             <label className="projects-field field-wide">Payment / invoice reference<input value={form.reference} onChange={e => setField('reference', e.target.value)} placeholder="Receipt, invoice or transfer ref." /></label>
             <label className="projects-field field-wide">Notes<textarea rows={3} value={form.notes} onChange={e => setField('notes', e.target.value)} placeholder="Additional details..." /></label>
           </div>
@@ -577,6 +603,7 @@ export default function ProjectCosts() {
           <Detail label="Supplier / recipient" value={viewCost.supplier || '—'} />
           <Detail label="Total cost" value={money(viewCost.amount)} /><Detail label="Amount paid" value={money(viewCost.amountPaid)} />
           <Detail label="Outstanding" value={money(viewCost.amount - viewCost.amountPaid)} />
+          {feesOf(viewCost) > 0 && <Detail label="MoMo fees" value={money(feesOf(viewCost))} />}
           <Detail label="Payment method" value={viewCost.paymentMethod} /><Detail label="Reference" value={viewCost.reference || '—'} />
         </div>
         {viewCost.notes && <div className="project-detail-notes"><strong>Notes</strong><p>{viewCost.notes}</p></div>}
@@ -586,9 +613,9 @@ export default function ProjectCosts() {
           if (!later.length && atRecording <= 0) return null;
           return <>
             <h4 className="cost-pay-title">Payments</h4>
-            {atRecording > 0 && <div className="cost-pay"><div className="cost-pay-info"><strong>Paid when recorded</strong><span>{viewCost.date} · {viewCost.paymentMethod}</span></div><div className="cost-pay-end"><strong>{money(atRecording)}</strong></div></div>}
+            {atRecording > 0 && <div className="cost-pay"><div className="cost-pay-info"><strong>Paid when recorded</strong><span>{viewCost.date} · {viewCost.paymentMethod}{viewCost.momoFee ? ` · MoMo fee ${money(viewCost.momoFee)}` : ''}</span></div><div className="cost-pay-end"><strong>{money(atRecording)}</strong></div></div>}
             {later.map(p => <div className="cost-pay" key={p.entryId}>
-              <div className="cost-pay-info"><strong>Payment</strong><span>{p.date} · {p.method}{p.reference ? ` · ${p.reference}` : ''}</span></div>
+              <div className="cost-pay-info"><strong>Payment</strong><span>{p.date} · {p.method}{p.fee ? ` · MoMo fee ${money(p.fee)}` : ''}{p.reference ? ` · ${p.reference}` : ''}</span></div>
               <div className="cost-pay-end"><strong>{money(p.amount)}</strong>{isAdmin && !viewCost.reversed && <button type="button" className="cost-undo" onClick={() => undoPayment(viewCost, p)} aria-label={`Undo payment of ${money(p.amount)} on ${p.date}`}><Undo2 size={13} /> Undo</button>}</div>
             </div>)}
           </>;
@@ -612,6 +639,7 @@ export default function ProjectCosts() {
             <label className="projects-field">Amount paid (RWF) *<input type="number" min="1" step="1" value={pay.amount} onChange={e => setPay(p => ({ ...p, amount: e.target.value }))} /></label>
             <label className="projects-field">Payment date *<input type="date" value={pay.date} onChange={e => setPay(p => ({ ...p, date: e.target.value }))} /></label>
             <label className="projects-field">Paid through<select value={pay.method} onChange={e => setPay(p => ({ ...p, method: e.target.value as PaymentMethod }))}>{payMethods.map(m => <option key={m}>{m}</option>)}</select></label>
+            {pay.method === 'Mobile money' && <label className="projects-field">MoMo fee (RWF)<input type="number" min="0" step="1" value={pay.fee} onChange={e => setPay(p => ({ ...p, fee: e.target.value }))} placeholder="0" /></label>}
             <label className="projects-field">Reference<input value={pay.reference} onChange={e => setPay(p => ({ ...p, reference: e.target.value }))} placeholder="Receipt or transaction reference" /></label>
           </div>
           <div className="projects-form-actions">
