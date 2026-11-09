@@ -15,6 +15,8 @@ export type CostLike = {
   amountPaid: number;
   paymentMethod: string;
   reference: string;
+  /** Mobile money fee paid with the part paid at recording. Counted as part of the project's cost. */
+  momoFee?: number;
 };
 
 const COSTS_KEY = 'ista-fortis-project-costs-v1';
@@ -44,6 +46,7 @@ export function postProjectCost(cost: CostLike, ledger: Ledger = defaultLedger) 
   const paid = Math.round(cost.amountPaid);
   const total = Math.round(cost.amount);
   const due = total - paid;
+  const fee = paid > 0 && cost.paymentMethod === 'Mobile money' ? Math.max(0, Math.round(cost.momoFee ?? 0)) : 0;
   return ledger.post({
     date: cost.date,
     description: `${cost.id} · ${cost.description}`,
@@ -55,15 +58,25 @@ export function postProjectCost(cost: CostLike, ledger: Ledger = defaultLedger) 
       { account: expenseAccountFor(cost.category), debit: total, projectId: cost.projectId, memo: cost.description },
       ...(paid > 0 ? [{ account: cashAccountFor(cost.paymentMethod), credit: paid, memo: cost.paymentMethod }] : []),
       ...(due > 0 ? [{ account: ACC.payables, credit: due, party: cost.supplier || 'Unspecified supplier' }] : []),
+      // Mobile money fee: part of the project's cost, paid from mobile money.
+      ...(fee > 0 ? [
+        { account: expenseAccountFor(cost.category), debit: fee, projectId: cost.projectId, memo: 'Mobile money fee' },
+        { account: ACC.mobileMoney, credit: fee, memo: 'Mobile money fee' },
+      ] : []),
     ],
   });
 }
 
 /** Later payment of an unpaid balance: debit payables, credit cash/bank/mobile money. */
 export function postCostPayment(
-  p: { costId: string; paymentNo: number; date: string; supplier: string; amount: number; method: string; reference?: string },
+  p: {
+    costId: string; paymentNo: number; date: string; supplier: string; amount: number; method: string; reference?: string;
+    /** Mobile money fee, with the project and cost category it belongs to. */
+    fee?: number; projectId?: string; category?: string;
+  },
   ledger: Ledger = defaultLedger,
 ) {
+  const fee = p.method === 'Mobile money' ? Math.max(0, Math.round(p.fee ?? 0)) : 0;
   return ledger.post({
     date: p.date,
     description: `Payment for ${p.costId}`,
@@ -74,6 +87,10 @@ export function postCostPayment(
     lines: [
       { account: ACC.payables, debit: Math.round(p.amount), party: p.supplier || 'Unspecified supplier' },
       { account: cashAccountFor(p.method), credit: Math.round(p.amount), memo: p.method },
+      ...(fee > 0 ? [
+        { account: expenseAccountFor(p.category ?? 'Other'), debit: fee, projectId: p.projectId, memo: 'Mobile money fee' },
+        { account: ACC.mobileMoney, credit: fee, memo: 'Mobile money fee' },
+      ] : []),
     ],
   });
 }
