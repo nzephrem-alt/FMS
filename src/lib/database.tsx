@@ -103,6 +103,7 @@ export const TABLES: TableSpec[] = [
         reversed: c.reversed === true,
         reversed_at: stamp(c.reversedAt),
         momo_fee: amount(c.momoFee),
+        activity: text(c.activity),
         recorded_at: stamp(c.createdAt) ?? new Date().toISOString(),
       };
     },
@@ -124,6 +125,7 @@ export const TABLES: TableSpec[] = [
       ...(r.reversed_at ? { reversedAt: isoStamp(r.reversed_at) } : {}),
       createdAt: isoStamp(r.recorded_at),
       ...(amount(r.momo_fee) > 0 ? { momoFee: amount(r.momo_fee) } : {}),
+      ...(text(r.activity) ? { activity: text(r.activity) } : {}),
     }),
   },
   {
