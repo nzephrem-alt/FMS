@@ -8,6 +8,7 @@ import { useLedgerEntries } from '../lib/useLedger';
 import type { JournalEntry } from '../lib/ledger';
 import { useAccess } from '../lib/access';
 import { buildReport, rwf, shortDay } from '../lib/weeklyReport';
+import { projectReceiptTotals } from '../lib/projectReceipts';
 import type { WRCost, WRLabour } from '../lib/weeklyReport';
 
 const PROJECTS_KEY = 'ista-fortis-projects-v1';
@@ -382,9 +383,11 @@ export default function FinancialReports() {
         invoiceReceipts[inv.projectId] = (invoiceReceipts[inv.projectId] ?? 0) + (Number(pay.amount) || 0);
       }
     }
+    // + client payments recorded on the Income page against the project.
+    const directReceipts = projectReceiptTotals(entries, range.to);
     const projectRows = projects.map(p => {
       const contract = Number(p.contractValue) || 0;
-      const received = (Number(p.totalReceived) || 0) + (invoiceReceipts[p.id] ?? 0);
+      const received = (Number(p.totalReceived) || 0) + (invoiceReceipts[p.id] ?? 0) + (directReceipts[p.id] ?? 0);
       const costs = costsByProject[p.id] ?? 0;
       return { id: p.id, name: p.projectName, client: p.client, status: p.status, contract, received, costs, margin: received - costs };
     });
