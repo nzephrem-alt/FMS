@@ -228,6 +228,14 @@ const LABOUR_CSS = `
 .projects-module .sl-type input{flex:1;min-width:0}
 .projects-module .sl-type button{flex:0 0 auto;width:30px;height:38px;border:1px solid #e5eaec;border-radius:10px;background:#fff;color:#4f5d55;display:grid;place-items:center;cursor:pointer}
 .projects-module .sl-row-head{font-size:11px;font-weight:500;color:#8a968f}
+.projects-module .sl-group-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:6px;padding:7px 12px;border-radius:10px;background:#eef8f2;font-size:11.5px;color:#1f6b46}
+.projects-module .sl-group-head:first-of-type{margin-top:0}
+.projects-module .sl-group-head b{font-weight:700}
+.projects-module .sl-group-head span{font-weight:600;font-variant-numeric:tabular-nums}
+.projects-module .sl-table tr.sl-group td{background:#eef8f2;font-size:11px;font-weight:700;color:#1f6b46;padding-top:8px;padding-bottom:8px;font-variant-numeric:tabular-nums}
+.projects-module .sl-table tr.sl-group td.sticky{background:#eef8f2}
+.projects-module .sl-table tr.sl-group td small{font-weight:500;color:#4f7a63;margin-left:6px}
+.projects-module .sl-table tbody tr.sl-group:hover td{background:#eef8f2}
 .projects-module .sl-remove{width:38px;height:38px;border:1px solid var(--line);background:#fff;border-radius:10px;display:grid;place-items:center;color:#b04a58;cursor:pointer}
 .projects-module .sl-remove:hover:not(:disabled){background:#fbd6db}
 .projects-module .sl-lock{width:38px;height:38px;display:grid;place-items:center;color:#1f7a4f}
@@ -364,6 +372,17 @@ export default function SiteLabour() {
     return [...seen.values()];
   }, [projectEntries]);
   const categoryOptions = useMemo(() => [...new Set([...LABOUR_TYPES, ...store.entries.map((e) => e.category)])], [store.entries]);
+  /** Display order of labour categories: the standard list first, then any others alphabetically. */
+  const categoryRank = (c: string) => { const i = LABOUR_TYPES.indexOf(c); return i === -1 ? LABOUR_TYPES.length : i; };
+  const byCategory = (a: string, b: string) => categoryRank(a) - categoryRank(b) || a.localeCompare(b);
+
+  /** This week's workers, grouped by labour category. */
+  const workerGroups = useMemo(() => {
+    const groups = new Map<string, typeof workers>();
+    workers.forEach((w) => groups.set(w.category, [...(groups.get(w.category) ?? []), w]));
+    return [...groups].sort(([a], [b]) => byCategory(a, b)).map(([category, list]) => ({ category, list }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workers]);
 
   const dayEntries = (date: string) => weekEntries.filter((e) => e.date === date);
   const activityOf = (date: string) => store.activities[dayKey(projectId, date)] ?? '';
@@ -615,7 +634,16 @@ export default function SiteLabour() {
                 </tr>
               </thead>
               <tbody>
-                {workers.map((w) => {
+                {workerGroups.map(({ category, list: groupWorkers }) => {
+                  const keys = new Set(groupWorkers.map((w) => w.key));
+                  const groupEntries = weekEntries.filter((e) => keys.has(norm(e.worker)));
+                  return [
+                    <tr key={`group-${category}`} className="sl-group">
+                      <td className="left sticky">{category}<small>{groupWorkers.length} worker{groupWorkers.length === 1 ? '' : 's'}</small></td>
+                      {days.map((d) => { const dayTotal = sum(groupEntries.filter((e) => e.date === d)); return <td key={d}>{dayTotal ? plain(dayTotal) : ''}</td>; })}
+                      <td className="right">{money(sum(groupEntries))}</td>
+                    </tr>,
+                    ...groupWorkers.map((w) => {
                   const mine = weekEntries.filter((e) => norm(e.worker) === w.key);
                   const total = sum(mine);
                   const unpaid = sum(mine.filter((e) => !e.paid));
@@ -643,6 +671,8 @@ export default function SiteLabour() {
                       <td className="right"><strong>{money(total)}</strong>{unpaid > 0 && <span className="sl-sub">{money(unpaid)} unpaid</span>}</td>
                     </tr>
                   );
+                    }),
+                  ];
                 })}
               </tbody>
               <tfoot>
@@ -678,7 +708,16 @@ export default function SiteLabour() {
 
             <div className="sl-rows">
               <div className="sl-row sl-row-head"><span>Worker name</span><span>Labour category</span><span>Pay for the day (RWF)</span><span /></div>
-              {editor.rows.map((r) => (
+              {(() => {
+                // Rows grouped by labour category. A category being typed stays under "Other" until saved, so the row does not jump while typing.
+                const groupOf = (r: DayRow) => (r.customType ? 'Other' : r.category || 'Other');
+                const names = [...new Set(editor.rows.map(groupOf))].sort(byCategory);
+                return names.map((name) => {
+                  const list = editor.rows.filter((r) => groupOf(r) === name);
+                  const total = list.reduce((s, r) => s + (Number.isFinite(r.rate) ? r.rate : 0), 0);
+                  return [
+                    <div className="sl-group-head" key={`group-${name}`}><b>{name} · {list.length} worker{list.length === 1 ? '' : 's'}</b><span>{money(total)}</span></div>,
+                    ...list.map((r) => (
                 <div className="sl-row" key={r.key}>
                   <input className="sl-name" list="sl-workers" value={r.worker} disabled={!!r.paid} onChange={(e) => updateRow(r.key, { worker: e.target.value })} placeholder="Worker name" aria-label="Worker name" />
                   {r.customType ? (
@@ -698,7 +737,10 @@ export default function SiteLabour() {
                     ? <span className="sl-lock" title={`Paid by ${r.paid.method} on ${longDate(r.paid.date)}. Remove the payment from the sheet to change it.`}><Lock size={15} /></span>
                     : <button type="button" className="sl-remove" onClick={() => removeRow(r.key)} aria-label="Remove worker"><Trash2 size={14} /></button>}
                 </div>
-              ))}
+                    )),
+                  ];
+                });
+              })()}
               <datalist id="sl-workers">{knownWorkers.map((n) => <option key={n} value={n} />)}</datalist>
             </div>
 
