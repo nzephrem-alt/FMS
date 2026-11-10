@@ -10,6 +10,7 @@ import {
   HandCoins,
   BriefcaseBusiness,
   ArrowRightLeft,
+  Undo2,
 } from 'lucide-react';
 import { ACC } from '../lib/accounts';
 import { ledger, type JournalEntry } from '../lib/ledger';
@@ -177,6 +178,8 @@ const INCOME_CSS = `
 .projects-module .inc-pill.none{background:#eceff0;color:#6b776f}
 .projects-module .inc-move{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font:inherit;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}
 .projects-module .inc-move:hover{background:#f1f5f4}
+.projects-module .inc-actions{display:inline-flex;gap:6px;justify-content:flex-end}
+.projects-module .inc-move.undo:hover{background:#fdf1f3;border-color:#f3c9d0;color:#b04a58}
 .projects-module .inc-hint{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#eef8f2;color:#1f6b46;font-size:11.5px;line-height:1.5}
 
 /* note */
@@ -490,6 +493,20 @@ export default function Income() {
     }
   };
 
+  /** Cancels income recorded by mistake: posts a reversal on the same date, so it no longer counts anywhere. */
+  const undoIncome = (entry: JournalEntry) => {
+    if (!window.confirm(`Remove "${entry.description}" (${money(entryAmount(entry))})? It is reversed in the books and no longer counts as received.`)) return;
+    setError('');
+    setSuccess('');
+    try {
+      ledger.reverse(entry.id, 'Recorded by mistake', entry.date);
+      setSuccess('Income removed.');
+      setEntries(ledger.getEntries());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to remove this income.');
+    }
+  };
+
   const entryAmount = (entry: JournalEntry) =>
     entry.lines
       .filter((line) => line.account === ACC.otherIncome || (line.account === ACC.contractRevenue && receiptIds.has(entry.id)))
@@ -754,11 +771,16 @@ export default function Income() {
                       </td>
                       {isAdmin && (
                         <td className="num">
+                          <div className="inc-actions">
                           {canMove && (
                             <button type="button" className="inc-move" onClick={() => moveToContractRevenue(entry)} title="Recorded as other income. Move it to contract revenue.">
                               <ArrowRightLeft size={13} /> Move to contract revenue
                             </button>
                           )}
+                          <button type="button" className="inc-move undo" onClick={() => undoIncome(entry)} title="Recorded by mistake? Remove it.">
+                            <Undo2 size={13} /> Undo
+                          </button>
+                          </div>
                         </td>
                       )}
                     </tr>
