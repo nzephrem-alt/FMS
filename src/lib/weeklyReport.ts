@@ -5,6 +5,7 @@
 import { isDirectCost } from './accounts';
 import type { JournalEntry } from './ledger';
 import { projectReceiptList } from './projectReceipts';
+import { owedByPerson } from './payrollAccruals';
 
 export type WRProject = { id: string; projectName: string; client?: string; contractValue: number; totalReceived: number; status: string };
 export type WRCost = {
@@ -157,6 +158,12 @@ export function buildReport(input: WRInput): WReport {
     labourOwed.set(e.projectId, x);
   });
   labourOwed.forEach((x, id) => issues.push(`Site labour awaiting payment on ${projectName(id)}: ${rwf(x.amount)} (${x.days} worker-day${x.days === 1 ? '' : 's'}).`));
+  // Salaries owed (Accrued Wages) as at the end date.
+  const salariesOwed = owedByPerson(input.entries, to);
+  if (salariesOwed.length) {
+    const list = salariesOwed.slice(0, 5).map((o) => `${o.name} ${rwf(o.amount)}`).join(', ');
+    issues.push(`Salaries owed: ${list}${salariesOwed.length > 5 ? `, and ${salariesOwed.length - 5} more` : ''} (total ${rwf(salariesOwed.reduce((s, o) => s + o.amount, 0))}).`);
+  }
   // Costs above cash received, and active projects with no payment yet.
   const directCosts: Record<string, number> = {};
   input.entries.filter((e) => e.date <= to).forEach((e) => e.lines.forEach((l) => {
