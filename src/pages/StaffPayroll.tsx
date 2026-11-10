@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { Plus, X, Check, Users, Wallet, CalendarCheck, Banknote, ChevronLeft, ChevronRight, Trash2, Pencil } from 'lucide-react';
+import { Plus, X, Check, Users, Wallet, CalendarCheck, Banknote, ChevronLeft, ChevronRight, Trash2, Pencil, AlertCircle } from 'lucide-react';
 import { auditLog } from '../lib/ledger';
 import { postPayrollPayment, reversePayrollPayment } from '../lib/postings'; // LEDGER
 import type { PayrollMethod } from '../lib/postings';
 import { useAccess } from '../lib/access';
+import { owedSalaries, syncPayrollAccruals } from '../lib/payrollAccruals';
 
 /** A salary that applies from a month onward ("" = from the very beginning). */
 type SalaryChange = { from: string; amount: number };
@@ -15,7 +16,7 @@ type Staff = {
   salaryHistory: SalaryChange[]; // first entry has from '' (the starting salary)
   createdAt: string;
 };
-/** One paid salary month. The amount is stored at the time of payment, so later salary changes never rewrite history. */
+/** One salary payment. A month can have several (a part payment, then the balance). The amount is stored at the time of payment, so later salary changes never rewrite history. */
 type Payment = { id: string; staffId: string; year: number; month: number; amount: number; method?: PayrollMethod; paidAt: string };
 type StaffForm = { name: string; position: string; startMonth: string; endMonth: string; startingSalary: number; changes: SalaryChange[] };
 type LegacyStaff = Partial<Staff> & { id: string; name: string; monthlySalary?: number; active?: boolean };
@@ -83,6 +84,7 @@ const PAYROLL_CSS = `
 
 /* pastel KPI cards */
 .pj-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.pj-kpis.five{grid-template-columns:repeat(5,minmax(0,1fr))}
 .pj-kpi{--bg:#bdeed6;--fg:#1f7a4f;display:flex;flex-direction:column;background:var(--bg);border-radius:16px;padding:14px 16px 16px;text-align:center;container-type:inline-size;transition:transform .15s ease,box-shadow .15s ease}
 .pj-kpi:hover{transform:translateY(-1px);box-shadow:0 8px 20px #1c2b2214}
 .pj-kpi.tone-green{--bg:#bdeed6;--fg:#1f7a4f}
@@ -138,6 +140,29 @@ const PAYROLL_CSS = `
 .projects-module .pr-cell.due:hover{border-color:#6fd6a0;background:#eef8f2}
 .projects-module .pr-cell.paid{background:#6fd6a0;border:1px solid #6fd6a0;color:#14412c}
 .projects-module .pr-cell.off{background:#f3f5f3;border:1px solid #eef1ee;cursor:not-allowed}
+.projects-module .pr-cell.part{border:1px solid #f0b35a;background:linear-gradient(135deg,#f6c47d 50%,#fff 50%);color:#7a4c14}
+.projects-module .pr-cell.late{border:1px solid #f0b35a;background:#fff8ec}
+.projects-module .pr-cell.readonly.late:hover{border-color:#f0b35a;background:#fff8ec}
+.projects-module .pr-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:8px;font-size:11px;color:var(--muted)}
+.projects-module .pr-legend span{display:inline-flex;align-items:center;gap:6px}
+.projects-module .pr-legend i{width:12px;height:12px;border-radius:4px;display:inline-block}
+
+/* salaries owed */
+.projects-module .pr-owed-table{width:100%;border-collapse:collapse}
+.projects-module .pr-owed-table th{padding:10px 20px;font-size:11px;font-weight:500;color:#8a968f;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+.projects-module .pr-owed-table td{padding:12px 20px;font-size:12px;color:#3b4a42;border-bottom:1px solid #f1f4f4}
+.projects-module .pr-owed-table .num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.projects-module .pr-owed-table tbody tr:hover td{background:#f7faf9}
+.projects-module .pr-owed-table tfoot td{background:#fff8ec;font-weight:700;color:var(--ink);border-bottom:0}
+.projects-module .pr-owed-table .pr-link{border:0;background:transparent;padding:0;font:inherit;font-size:12px;font-weight:600;color:#1f6b46;cursor:pointer}
+.projects-module .pr-owed-table .pr-link:hover{text-decoration:underline}
+.projects-module .pr-paylist{display:grid;gap:6px;margin:0 0 14px}
+.projects-module .pr-payrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;font-size:12px}
+.projects-module .pr-payrow span{color:var(--muted);font-size:11px}
+.projects-module .pr-payrow button{border:1px solid var(--line);background:#fff;border-radius:8px;height:28px;padding:0 10px;font:inherit;font-size:11px;font-weight:600;color:#b04a58;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+.projects-module .pr-payrow button:hover{background:#fdf1f3}
+.projects-module .pr-pay-info.done{background:#bdeed6;color:#1f6b46}
+@media(max-width:600px){.projects-module .pr-owed-table th,.projects-module .pr-owed-table td{padding-left:14px;padding-right:14px}}
 
 /* pop-ups */
 .projects-module .projects-modal{border-radius:18px}
@@ -160,8 +185,9 @@ const PAYROLL_CSS = `
 .projects-module .pr-split .group{display:flex;gap:10px;margin-left:auto}
 .projects-module .pr-danger{color:#b04a58}
 
-@media(max-width:1100px){.pj-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:420px){.pj-kpis{grid-template-columns:1fr}.projects-module .pr-change-row{grid-template-columns:1fr}}
+@media(max-width:1280px){.pj-kpis.five{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:1100px){.pj-kpis,.pj-kpis.five{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:420px){.pj-kpis,.pj-kpis.five{grid-template-columns:1fr}.projects-module .pr-change-row{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.pj-kpi,.pr-cell{transition:none}.pj-kpi:hover{transform:none}}
 `;
 
@@ -183,7 +209,7 @@ export default function StaffPayroll() {
   const [error, setError] = useState('');
 
   // month payment window
-  const [payCell, setPayCell] = useState<{ staffId: string; month: number } | null>(null);
+  const [payCell, setPayCell] = useState<{ staffId: string; year: number; month: number } | null>(null);
   const [payForm, setPayForm] = useState<{ amount: number; method: PayrollMethod }>({ amount: 0, method: 'Bank transfer' });
   const [payError, setPayError] = useState('');
 
@@ -200,8 +226,30 @@ export default function StaffPayroll() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // LEDGER: keep "salaries owed" (Accrued Wages) in step with the staff list and payments.
+  useEffect(() => {
+    if (!isAdmin) return;
+    try { syncPayrollAccruals(staff, payments); }
+    catch (e) { console.error('Could not update salaries owed in the ledger:', e); }
+  }, [staff, payments, isAdmin]);
+
   const yearPayments = useMemo(() => payments.filter(p => p.year === year), [payments, year]);
-  const paidMap = useMemo(() => new Map(yearPayments.map(p => [`${p.staffId}|${p.month}`, p])), [yearPayments]);
+  /** All payments for one staff member and month, oldest first. */
+  const paymentsByMonth = useMemo(() => {
+    const map = new Map<string, Payment[]>();
+    [...payments].sort((a, b) => a.paidAt.localeCompare(b.paidAt)).forEach(p => {
+      const key = `${p.staffId}|${ym(p.year, p.month)}`;
+      map.set(key, [...(map.get(key) ?? []), p]);
+    });
+    return map;
+  }, [payments]);
+  const paymentsOf = (staffId: string, y: number, month: number) => paymentsByMonth.get(`${staffId}|${ym(y, month)}`) ?? [];
+  const paidOf = (staffId: string, y: number, month: number) => paymentsOf(staffId, y, month).reduce((s, p) => s + p.amount, 0);
+
+  // Salaries owed: part-paid months and unpaid months that are over.
+  const owed = useMemo(() => owedSalaries(staff, payments), [staff, payments]);
+  const owedTotal = owed.reduce((s, o) => s + o.owed, 0);
+  const owedKeys = useMemo(() => new Set(owed.map(o => `${o.staffId}|${o.month}`)), [owed]);
 
   // Month used to show a salary in the table: this month, or December / January of another year.
   const refMonth = year === now.getFullYear() ? currentMonth : year < now.getFullYear() ? ym(year, 12) : ym(year, 1);
@@ -210,8 +258,11 @@ export default function StaffPayroll() {
     .filter(s => showFormer || !(s.endMonth && s.endMonth < currentMonth))
     .map(s => {
       const mine = yearPayments.filter(p => p.staffId === s.id);
-      return { staff: s, months: mine.length, total: mine.reduce((sum, p) => sum + p.amount, 0) };
-    }), [staff, yearPayments, showFormer, currentMonth]);
+      // Months paid in full
+      const months = MONTHS.filter((_, i) => { const salary = salaryFor(s, ym(year, i + 1)); const paid = paidOf(s.id, year, i + 1); return paid > 0 && paid >= salary; }).length;
+      return { staff: s, months, total: mine.reduce((sum, p) => sum + p.amount, 0) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }), [staff, yearPayments, showFormer, currentMonth, paymentsByMonth, year]);
 
   const monthTotals = useMemo(() => MONTHS.map((_, i) => yearPayments.filter(p => p.month === i + 1).reduce((s, p) => s + p.amount, 0)), [yearPayments]);
   const yearTotal = monthTotals.reduce((s, n) => s + n, 0);
@@ -220,61 +271,56 @@ export default function StaffPayroll() {
   const paidThisMonth = payments.filter(p => p.year === now.getFullYear() && p.month === now.getMonth() + 1).reduce((s, p) => s + p.amount, 0);
 
   /* ---------- paying a month ---------- */
-  const openPay = (s: Staff, month: number) => {
-    const existing = paidMap.get(`${s.id}|${month}`);
-    setPayForm({ amount: existing ? existing.amount : salaryFor(s, ym(year, month)), method: existing?.method ?? payMethod });
-    setPayError(''); setPayCell({ staffId: s.id, month });
+  const openPay = (s: Staff, y: number, month: number) => {
+    // Suggest what is still owed for the month (the full salary if nothing was paid yet).
+    const left = Math.max(salaryFor(s, ym(y, month)) - paidOf(s.id, y, month), 0);
+    setPayForm({ amount: left, method: payMethod });
+    setPayError(''); setPayCell({ staffId: s.id, year: y, month });
   };
   const closePay = () => { setPayCell(null); setPayError(''); };
 
   const submitPay = () => {
     if (!payCell) return;
     const s = staff.find(x => x.id === payCell.staffId); if (!s) return;
-    const month = payCell.month;
-    const label = `${MONTHS[month - 1]} ${year}`;
-    const existing = paidMap.get(`${s.id}|${month}`);
+    const { year: y, month } = payCell;
+    const label = `${MONTHS[month - 1]} ${y}`;
+    const left = salaryFor(s, ym(y, month)) - paidOf(s.id, y, month);
     if (!Number.isInteger(payForm.amount) || payForm.amount <= 0) { setPayError('Enter a whole RWF amount above zero.'); return; }
-    if (existing && existing.amount === payForm.amount && (existing.method ?? 'Bank transfer') === payForm.method) { closePay(); return; }
-    if (existing) {
-      // LEDGER: a posted entry is never edited, so a correction reverses it and posts a new one
-      try { reversePayrollPayment(existing.id, `${label} salary corrected for ${s.name}`); }
-      catch (e) { setPayError(errText(e, 'Could not reverse in the ledger.')); return; }
-      setPayments(old => old.filter(p => p.id !== existing.id));
-    }
-    const record: Payment = { id: newId('PAY'), staffId: s.id, year, month, amount: payForm.amount, method: payForm.method, paidAt: existing?.paidAt ?? new Date().toISOString() };
+    if (payForm.amount > left) { setPayError(left > 0 ? `Only ${money(left)} is still owed for ${label}. To pay more, change the salary first.` : `${label} is already paid in full.`); return; }
+    const earlier = paymentsOf(s.id, y, month).length;
+    const record: Payment = { id: newId('PAY'), staffId: s.id, year: y, month, amount: payForm.amount, method: payForm.method, paidAt: new Date().toISOString() };
     // LEDGER: post first, so a payment is never saved without its journal entry
     try { postPayrollPayment(toPosting(record, s.name)); }
-    catch (e) { setPayError(`${errText(e, 'Could not post to the ledger.')}${existing ? ' The previous payment was reversed, so this month is now unpaid.' : ''}`); return; }
+    catch (e) { setPayError(errText(e, 'Could not post to the ledger.')); return; }
     setPayments(old => [...old, record]);
-    audit(existing ? 'payroll.corrected' : 'payroll.paid', record.id, `${existing ? 'Corrected' : 'Paid'} ${label} salary for ${s.name}`, { staffId: s.id, year, month, amount: record.amount, method: record.method, previousAmount: existing?.amount });
+    audit('payroll.paid', record.id, `Paid ${money(record.amount)} of ${label} salary for ${s.name}${earlier ? ' (balance)' : ''}`, { staffId: s.id, year: y, month, amount: record.amount, method: record.method, owedBefore: left });
     closePay();
   };
 
-  const removePay = () => {
-    if (!payCell) return;
-    const s = staff.find(x => x.id === payCell.staffId); if (!s) return;
-    const existing = paidMap.get(`${s.id}|${payCell.month}`); if (!existing) return;
-    const label = `${MONTHS[payCell.month - 1]} ${year}`;
+  const removePay = (existing: Payment) => {
+    const s = staff.find(x => x.id === existing.staffId); if (!s) return;
+    const label = `${MONTHS[existing.month - 1]} ${existing.year}`;
     if (!window.confirm(`Remove the ${label} payment of ${money(existing.amount)} for ${s.name}? A reversing entry will be posted to the ledger.`)) return;
     // LEDGER: post the reversing entry first
     try { reversePayrollPayment(existing.id, `${label} salary removed for ${s.name}`); }
     catch (e) { setPayError(errText(e, 'Could not reverse in the ledger.')); return; }
     setPayments(old => old.filter(p => p.id !== existing.id));
-    audit('payroll.unpaid', existing.id, `Removed ${label} salary payment for ${s.name}`, { staffId: s.id, year, month: payCell.month, amount: existing.amount });
-    closePay();
+    audit('payroll.unpaid', existing.id, `Removed ${label} salary payment for ${s.name}`, { staffId: s.id, year: existing.year, month: existing.month, amount: existing.amount });
   };
 
   const payAll = (month: number) => {
     const label = `${MONTHS[month - 1]} ${year}`;
-    const due = staff.filter(s => employedIn(s, ym(year, month)) && salaryFor(s, ym(year, month)) > 0 && !paidMap.has(`${s.id}|${month}`));
+    // Everyone employed that month who is still owed something: the full salary, or the balance of a part payment.
+    const leftOf = (s: Staff) => salaryFor(s, ym(year, month)) - paidOf(s.id, year, month);
+    const due = staff.filter(s => employedIn(s, ym(year, month)) && leftOf(s) > 0);
     if (!due.length) { window.alert(`Everyone employed is already paid for ${label}.`); return; }
-    const total = due.reduce((s, x) => s + salaryFor(x, ym(year, month)), 0);
+    const total = due.reduce((s, x) => s + leftOf(x), 0);
     if (!window.confirm(`Mark ${due.length} staff as paid for ${label} by ${payMethod}? Total ${money(total)}.`)) return;
     const base = Date.now();
     const added: Payment[] = [];
     let failure = '';
     for (const s of due) {
-      const record: Payment = { id: newId('PAY'), staffId: s.id, year, month, amount: salaryFor(s, ym(year, month)), method: payMethod, paidAt: new Date(base + added.length).toISOString() };
+      const record: Payment = { id: newId('PAY'), staffId: s.id, year, month, amount: leftOf(s), method: payMethod, paidAt: new Date(base + added.length).toISOString() };
       // LEDGER: post first, so a payment is never saved without its journal entry
       try { postPayrollPayment(toPosting(record, s.name)); added.push(record); }
       catch (e) { failure = errText(e, 'Could not post to the ledger.'); break; }
@@ -336,7 +382,10 @@ export default function StaffPayroll() {
   };
 
   const payStaff = payCell ? staff.find(s => s.id === payCell.staffId) : undefined;
-  const payExisting = payCell && payStaff ? paidMap.get(`${payStaff.id}|${payCell.month}`) : undefined;
+  const payList = payCell && payStaff ? paymentsOf(payStaff.id, payCell.year, payCell.month) : [];
+  const paySalary = payCell && payStaff ? salaryFor(payStaff, ym(payCell.year, payCell.month)) : 0;
+  const payPaid = payList.reduce((s, p) => s + p.amount, 0);
+  const payLeft = Math.max(paySalary - payPaid, 0);
   const monthName = MONTHS[now.getMonth()];
 
   return <section className="projects-module">
@@ -357,18 +406,20 @@ export default function StaffPayroll() {
       </div>
     </div>
 
-    <div className="pj-kpis">
+    <div className="pj-kpis five">
       <Metric title="Staff this month" value={String(activeStaff.length)} note={`${staff.length - activeStaff.length} not currently employed`} icon={<Users size={13} />} tone="blue" />
       <Metric title="Monthly payroll" value={money(monthlyPayroll)} note={`Salaries for ${monthName}`} icon={<Banknote size={13} />} tone="blue" />
       <Metric title={`Paid in ${year}`} value={money(yearTotal)} note={`${yearPayments.length} salary payment${yearPayments.length === 1 ? '' : 's'}`} icon={<Wallet size={13} />} tone="green" />
       <Metric title={`Paid in ${monthName}`} value={money(paidThisMonth)} note={`Current month, ${now.getFullYear()}`} icon={<CalendarCheck size={13} />} tone="green" />
+      <Metric title="Salaries owed" value={money(owedTotal)} note={owed.length ? `${owed.length} month${owed.length === 1 ? '' : 's'} not fully paid` : 'All finished months are paid'} icon={<AlertCircle size={13} />} tone={owedTotal > 0 ? 'amber' : 'green'} />
     </div>
 
     <div className="panel projects-register">
       <div className="panel-heading projects-heading">
         <div>
           <h3>Payroll {year}</h3>
-          <p>Click a month to pay it, change the amount, or remove it. Click a month name to pay everyone employed that month. Use the pencil to edit a staff member. Each payment is posted to the ledger as Staff Salaries.</p>
+          <p>Click a month to pay it, pay a balance, or remove a payment. Click a month name to pay everyone still owed for that month. Use the pencil to edit a staff member.</p>
+          <div className="pr-legend"><span><i style={{ background: '#6fd6a0' }} />Paid</span><span><i style={{ background: 'linear-gradient(135deg,#f6c47d 50%,#fff 50%)', border: '1px solid #f0b35a' }} />Part-paid</span><span><i style={{ background: '#fff8ec', border: '1px solid #f0b35a' }} />Month over, not paid</span></div>
         </div>
         <label className="pr-toggle"><input type="checkbox" checked={showFormer} onChange={e => setShowFormer(e.target.checked)} /> Show former staff</label>
       </div>
@@ -407,15 +458,22 @@ export default function StaffPayroll() {
                 <td className="right nowrap money-cell">{money(salaryFor(s, refMonth))}</td>
                 {MONTHS.map((m, i) => {
                   const month = ym(year, i + 1);
-                  const p = paidMap.get(`${s.id}|${i + 1}`);
+                  const list = paymentsOf(s.id, year, i + 1);
+                  const paid = list.reduce((sum, x) => sum + x.amount, 0);
+                  const salary = salaryFor(s, month);
                   const employed = employedIn(s, month);
-                  const clickable = employed || !!p;
+                  const full = paid > 0 && paid >= salary;
+                  const state = full ? 'paid' : paid > 0 ? 'part' : !employed ? 'off' : owedKeys.has(`${s.id}|${month}`) ? 'due late' : 'due';
+                  const clickable = employed || paid > 0;
+                  const tip = full ? `Paid ${money(paid)}${list.length > 1 ? ` in ${list.length} payments` : ` by ${list[0].method ?? 'Bank transfer'} on ${new Date(list[0].paidAt).toLocaleDateString()}`}`
+                    : paid > 0 ? `Paid ${money(paid)} of ${money(salary)} · ${money(salary - paid)} owed`
+                    : employed ? `Salary ${money(salary)}.${owedKeys.has(`${s.id}|${month}`) ? ' Owed.' : ''}${isAdmin ? ' Click to pay.' : ' Not paid yet.'}` : 'Not employed this month';
                   return <td key={m} style={{ padding: '8px 4px' }}>
-                    <button type="button" disabled={!clickable || !isAdmin} onClick={() => openPay(s, i + 1)}
-                      className={`pr-cell ${p ? 'paid' : employed ? 'due' : 'off'}${isAdmin ? '' : ' readonly'}`}
-                      aria-label={`${s.name}, ${m} ${year}: ${p ? 'paid' : employed ? 'not paid' : 'not employed'}`}
-                      title={p ? `Paid ${money(p.amount)} by ${p.method ?? 'Bank transfer'} on ${new Date(p.paidAt).toLocaleDateString()}` : employed ? `Salary ${money(salaryFor(s, month))}.${isAdmin ? ' Click to pay.' : ' Not paid yet.'}` : 'Not employed this month'}>
-                      {p && <Check size={15} strokeWidth={3} />}
+                    <button type="button" disabled={!clickable || !isAdmin} onClick={() => openPay(s, year, i + 1)}
+                      className={`pr-cell ${state}${isAdmin ? '' : ' readonly'}`}
+                      aria-label={`${s.name}, ${m} ${year}: ${full ? 'paid' : paid > 0 ? 'part-paid' : employed ? 'not paid' : 'not employed'}`}
+                      title={tip}>
+                      {full && <Check size={15} strokeWidth={3} />}
                     </button>
                   </td>;
                 })}
@@ -436,24 +494,59 @@ export default function StaffPayroll() {
       )}
     </div>
 
+    {owed.length > 0 && <div className="panel projects-register">
+      <div className="panel-heading projects-heading">
+        <div>
+          <h3>Salaries owed</h3>
+          <p>Months that are over but not fully paid. They show on the balance sheet as Accrued Wages until they are paid.</p>
+        </div>
+      </div>
+      <div className="projects-table-wrap">
+        <table className="pr-owed-table">
+          <thead><tr><th>Staff</th><th>Month</th><th className="num">Salary</th><th className="num">Paid</th><th className="num">Owed</th></tr></thead>
+          <tbody>{owed.map(o => {
+            const s = staff.find(x => x.id === o.staffId);
+            const [oy, om] = o.month.split('-').map(Number);
+            return <tr key={`${o.staffId}|${o.month}`}>
+              <td>{isAdmin && s ? <button type="button" className="pr-link" onClick={() => openPay(s, oy, om)} title="Pay this month">{o.name}</button> : <strong>{o.name}</strong>}</td>
+              <td>{monthLabel(o.month)}</td>
+              <td className="num">{money(o.salary)}</td>
+              <td className="num">{money(o.paid)}</td>
+              <td className="num"><strong>{money(o.owed)}</strong></td>
+            </tr>;
+          })}</tbody>
+          <tfoot><tr><td colSpan={4}>Total owed</td><td className="num">{money(owedTotal)}</td></tr></tfoot>
+        </table>
+      </div>
+    </div>}
+
     {payCell && payStaff && isAdmin && <div className="projects-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) closePay(); }}>
       <section className="projects-modal pr-pay-modal" role="dialog" aria-modal="true" aria-labelledby="pay-title">
         <div className="projects-modal-header">
-          <div><div className="eyebrow">{payExisting ? 'SALARY PAID' : 'PAY SALARY'}</div><h3 id="pay-title">{payStaff.name} · {MONTHS[payCell.month - 1]} {year}</h3></div>
+          <div><div className="eyebrow">{payLeft > 0 ? 'PAY SALARY' : 'SALARY PAID'}</div><h3 id="pay-title">{payStaff.name} · {MONTHS[payCell.month - 1]} {payCell.year}</h3></div>
           <button className="projects-close" onClick={closePay} aria-label="Close"><X size={19} /></button>
         </div>
-        <p className="pr-pay-info">Scheduled salary for this month: <strong>{money(salaryFor(payStaff, ym(year, payCell.month)))}</strong>{payExisting && <> · Paid on {new Date(payExisting.paidAt).toLocaleDateString()}</>}</p>
-        <div className="pr-stack">
-          <label className="projects-field">Amount (RWF)<input type="number" min="1" step="1" value={payForm.amount || ''} onChange={e => setPayForm(f => ({ ...f, amount: Number(e.target.value) }))} /></label>
+        <p className={`pr-pay-info${payLeft > 0 ? '' : ' done'}`}>
+          Salary for this month: <strong>{money(paySalary)}</strong>
+          {payPaid > 0 && <> · Paid: <strong>{money(payPaid)}</strong></>}
+          {payPaid > 0 && (payLeft > 0 ? <> · Still owed: <strong>{money(payLeft)}</strong></> : <> · Paid in full</>)}
+        </p>
+        {payList.length > 0 && <div className="pr-paylist">
+          {payList.map(p => <div key={p.id} className="pr-payrow">
+            <div><strong>{money(p.amount)}</strong> <span>· {p.method ?? 'Bank transfer'} · {new Date(p.paidAt).toLocaleDateString()}</span></div>
+            <button type="button" onClick={() => removePay(p)} aria-label={`Remove payment of ${money(p.amount)}`}><Trash2 size={12} /> Remove</button>
+          </div>)}
+        </div>}
+        {payLeft > 0 && <div className="pr-stack">
+          <label className="projects-field">{payPaid > 0 ? 'Pay the balance or part of it (RWF)' : 'Amount paid (RWF)'}<input type="number" min="1" step="1" max={payLeft} value={payForm.amount || ''} onChange={e => setPayForm(f => ({ ...f, amount: Number(e.target.value) }))} /></label>
           <label className="projects-field">Paid from<select value={payForm.method} onChange={e => setPayForm(f => ({ ...f, method: e.target.value as PayrollMethod }))}>{METHODS.map(m => <option key={m}>{m}</option>)}</select></label>
-          {payExisting && <p className="pr-help">Changing a paid amount reverses the old ledger entry and posts a new one, so the history stays complete.</p>}
-          {payError && <p className="projects-validation" role="alert">{payError}</p>}
-        </div>
+          <p className="pr-help">Paying less than the salary leaves the rest as owed. Once the month is over, it shows under Salaries owed until it is paid.</p>
+        </div>}
+        {payError && <p className="projects-validation" role="alert">{payError}</p>}
         <div className="pr-split">
-          {payExisting && <button type="button" className="projects-cancel pr-danger" onClick={removePay}><Trash2 size={14} /> Remove payment</button>}
           <div className="group">
-            <button type="button" className="projects-cancel" onClick={closePay}>Cancel</button>
-            <button type="button" className="primary-button" onClick={submitPay}><Check size={15} /> {payExisting ? 'Save changes' : 'Mark as paid'}</button>
+            <button type="button" className="projects-cancel" onClick={closePay}>{payLeft > 0 ? 'Cancel' : 'Close'}</button>
+            {payLeft > 0 && <button type="button" className="primary-button" onClick={submitPay}><Check size={15} /> {payPaid > 0 ? 'Record payment' : 'Mark as paid'}</button>}
           </div>
         </div>
       </section>
