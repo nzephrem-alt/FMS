@@ -649,7 +649,7 @@ export default function SiteLabour() {
                   const unpaid = sum(mine.filter((e) => !e.paid));
                   return (
                     <tr key={w.key}>
-                      <td className="left sticky sl-worker"><strong>{w.name}</strong><span className={w.category === 'Masons' ? 'mason' : undefined}>{w.category}</span></td>
+                      <td className="left sticky sl-worker"><strong>{w.name}</strong></td>
                       {days.map((d) => {
                         const e = cellMap.get(`${w.key}|${d}`);
                         if (!e) return <td key={d}><span className="sl-none">—</span></td>;
