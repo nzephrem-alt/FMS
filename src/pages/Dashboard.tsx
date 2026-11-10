@@ -9,6 +9,7 @@ import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Toolti
 import { ACC, getAccount, isDirectCost } from '../lib/accounts';
 import { syncStoredInvoices, syncStoredProjectCosts } from '../lib/postings';
 import { useLedgerEntries } from '../lib/useLedger';
+import { projectReceiptTotals } from '../lib/projectReceipts';
 import type { JournalEntry } from '../lib/ledger';
 
 const PROJECTS_KEY = 'ista-fortis-projects-v1';
@@ -127,7 +128,9 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
     }
     return totals;
   }, [invoices]);
-  const receivedOf = (p: ProjectRow) => num(p.totalReceived) + (invoiceReceipts[p.id] ?? 0);
+  // + client payments recorded on the Income page against a project.
+  const directReceipts = useMemo(() => projectReceiptTotals(entries), [entries]);
+  const receivedOf = (p: ProjectRow) => num(p.totalReceived) + (invoiceReceipts[p.id] ?? 0) + (directReceipts[p.id] ?? 0);
 
   // Portfolio figures come from the Projects register plus invoice payments.
   const counted = projects.filter(p => p.status !== 'Cancelled');
