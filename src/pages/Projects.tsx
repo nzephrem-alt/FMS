@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { auditLog } from '../lib/ledger';
 import { useAccess } from '../lib/access';
+import { useLedgerEntries } from '../lib/useLedger';
+import { projectReceiptTotals } from '../lib/projectReceipts';
 import { buildPreview, downloadProjectTemplate, readProjectFile } from '../lib/projectImport';
 import type { ImportMode, ProjectRecord, ProjectStatus } from '../lib/projectImport';
 
@@ -191,6 +193,9 @@ export default function Projects() {
   const { isAdmin } = useAccess(); // Viewers see the records but no buttons that change them
   const [projects, setProjects] = useState<Project[]>(readProjects);
   const [invoiceReceipts, setInvoiceReceipts] = useState<Record<string, number>>(readInvoiceReceipts);
+  const ledgerEntries = useLedgerEntries();
+  // Client payments recorded on the Income page against a project.
+  const directReceipts = useMemo(() => projectReceiptTotals(ledgerEntries), [ledgerEntries]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [showForm, setShowForm] = useState(false);
@@ -224,8 +229,8 @@ export default function Projects() {
     };
   }, []);
 
-  /** Total received = money received before the system + payments recorded on invoices. */
-  const receivedOf = (project: Project) => project.totalReceived + (invoiceReceipts[project.id] ?? 0);
+  /** Total received = money received before the system + payments on invoices + payments recorded on the Income page. */
+  const receivedOf = (project: Project) => project.totalReceived + (invoiceReceipts[project.id] ?? 0) + (directReceipts[project.id] ?? 0);
 
   const filteredProjects = useMemo(() => projects.filter(project => {
     const query = search.trim().toLowerCase();
@@ -236,10 +241,10 @@ export default function Projects() {
 
   const totals = useMemo(() => ({
     contract: projects.reduce((sum, project) => sum + project.contractValue, 0),
-    received: projects.reduce((sum, project) => sum + project.totalReceived + (invoiceReceipts[project.id] ?? 0), 0),
-    outstanding: projects.reduce((sum, project) => sum + Math.max(project.contractValue - (project.totalReceived + (invoiceReceipts[project.id] ?? 0)), 0), 0),
+    received: projects.reduce((sum, project) => sum + project.totalReceived + (invoiceReceipts[project.id] ?? 0) + (directReceipts[project.id] ?? 0), 0),
+    outstanding: projects.reduce((sum, project) => sum + Math.max(project.contractValue - (project.totalReceived + (invoiceReceipts[project.id] ?? 0) + (directReceipts[project.id] ?? 0)), 0), 0),
     active: projects.filter(project => project.status === 'Active').length,
-  }), [projects, invoiceReceipts]);
+  }), [projects, invoiceReceipts, directReceipts]);
 
   const outstandingPct = totals.contract > 0 ? Math.round((totals.outstanding / totals.contract) * 100) : 0;
 
@@ -432,6 +437,7 @@ export default function Projects() {
             <Detail label="Client" value={selectedProject.client} /><Detail label="Location" value={selectedProject.location || 'Not specified'} />
             <Detail label="Contract value" value={money(selectedProject.contractValue)} /><Detail label="Total received" value={money(receivedOf(selectedProject))} />
             <Detail label="Received before system" value={money(selectedProject.totalReceived)} /><Detail label="Invoice payments" value={money(invoiceReceipts[selectedProject.id] ?? 0)} />
+            <Detail label="Payments on Income page" value={money(directReceipts[selectedProject.id] ?? 0)} />
             <Detail label="Outstanding" value={money(Math.max(selectedProject.contractValue - receivedOf(selectedProject), 0))} />
             <Detail label="Current phase" value={selectedProject.currentPhase || 'Not specified'} />
             <Detail label="Start date" value={selectedProject.startDate || 'Not specified'} /><Detail label="Expected completion" value={selectedProject.expectedCompletion || 'Not specified'} />
