@@ -9,10 +9,12 @@ import {
   FileText,
   HandCoins,
   BriefcaseBusiness,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { ACC } from '../lib/accounts';
 import { ledger, type JournalEntry } from '../lib/ledger';
 import { useAccess } from '../lib/access';
+import { PROJECT_RECEIPT_PREFIX, projectReceiptList } from '../lib/projectReceipts';
 
 type ProjectStatus = 'Active' | 'Completed' | 'On hold' | 'Cancelled';
 
@@ -173,6 +175,9 @@ const INCOME_CSS = `
 .projects-module .projects-empty-icon{background:#ebe8fb;color:#6a5bc2;border-radius:14px}
 .projects-module .inc-pill{display:inline-block;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600;background:#eef8f2;color:#1f6b46;white-space:nowrap}
 .projects-module .inc-pill.none{background:#eceff0;color:#6b776f}
+.projects-module .inc-move{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font:inherit;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}
+.projects-module .inc-move:hover{background:#f1f5f4}
+.projects-module .inc-hint{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#eef8f2;color:#1f6b46;font-size:11.5px;line-height:1.5}
 
 /* note */
 .projects-module .inc-note{padding:14px 16px;border-radius:14px;background:#eef8f2;color:#3f5a4c;font-size:11.5px;line-height:1.6}
@@ -253,6 +258,11 @@ export default function Income() {
     [invoices]
   );
 
+  // Client payments recorded on this page against a project.
+  const receipts = useMemo(() => projectReceiptList(entries), [entries]);
+  const receiptIds = useMemo(() => new Set(receipts.map((r) => r.entry.id)), [receipts]);
+  const directTotal = receipts.reduce((total, r) => total + r.amount, 0);
+
   const projectSummaries = useMemo(() => {
     return projects.map((project) => {
       const projectInvoices = validInvoices.filter(
@@ -269,14 +279,20 @@ export default function Income() {
         0
       );
 
+      // Received = before the system + invoice payments + payments recorded here (same as the Projects page).
+      const direct = receipts
+        .filter((r) => r.projectId === project.id)
+        .reduce((total, r) => total + r.amount, 0);
+      const totalReceived = Number(project.totalReceived || 0) + collected + direct;
+
       return {
         project,
         invoiced,
-        collected,
-        outstanding: Math.max(invoiced - collected, 0),
+        collected: totalReceived,
+        outstanding: Math.max(Number(project.contractValue || 0) - totalReceived, 0),
       };
     });
-  }, [projects, validInvoices]);
+  }, [projects, validInvoices, receipts]);
 
   const totalContractValue = projects.reduce(
     (total, project) => total + Number(project.contractValue || 0),
@@ -297,7 +313,7 @@ export default function Income() {
 
   const otherIncomeEntries = useMemo(() => {
     return entries.filter((entry) => {
-      if (entry.reversalOf) return false;
+      if (entry.reversalOf || receiptIds.has(entry.id)) return false;
 
       return (
         entry.lines.some(
@@ -306,7 +322,13 @@ export default function Income() {
         !entries.some((reversal) => reversal.reversalOf === entry.id)
       );
     });
-  }, [entries]);
+  }, [entries, receiptIds]);
+
+  // Table: payments on projects and other income, newest first.
+  const incomeEntries = useMemo(
+    () => [...receipts.map((r) => r.entry), ...otherIncomeEntries].sort((a, b) => b.date.localeCompare(a.date)),
+    [receipts, otherIncomeEntries]
+  );
 
   const otherIncomeTotal = otherIncomeEntries.reduce((total, entry) => {
     const credit = entry.lines
@@ -323,7 +345,7 @@ export default function Income() {
   const filteredEntries = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    return otherIncomeEntries.filter((entry) => {
+    return incomeEntries.filter((entry) => {
       const projectId = entry.lines.find((line) => line.projectId)?.projectId;
       const project = projectId ? projectMap.get(projectId) : undefined;
 
@@ -345,7 +367,7 @@ export default function Income() {
 
       return matchesProject && matchesSearch;
     });
-  }, [otherIncomeEntries, search, selectedProject, projectMap]);
+  }, [incomeEntries, search, selectedProject, projectMap]);
 
   const collectedPct =
     totalInvoiced > 0 ? Math.round((totalCollected / totalInvoiced) * 100) : 0;
@@ -399,7 +421,8 @@ export default function Income() {
       (item) => item.id === form.projectId
     );
 
-    const sourceId = `other-income-${Date.now()}`;
+    // With a project it is a client payment on that project (contract revenue); without one, other income.
+    const sourceId = `${form.projectId ? PROJECT_RECEIPT_PREFIX : 'other-income-'}${Date.now()}`;
 
     try {
       ledger.post({
@@ -418,7 +441,7 @@ export default function Income() {
             memo: form.description.trim(),
           },
           {
-            account: ACC.otherIncome,
+            account: form.projectId ? ACC.contractRevenue : ACC.otherIncome,
             credit: form.amount,
             party: form.payer.trim() || undefined,
             projectId: form.projectId || undefined,
@@ -429,7 +452,7 @@ export default function Income() {
         ],
       });
 
-      setSuccess('Other income recorded successfully.');
+      setSuccess(project ? `Payment recorded on ${project.projectName}.` : 'Other income recorded successfully.');
       resetForm();
       setShowForm(false);
       setEntries(ledger.getEntries());
@@ -442,9 +465,34 @@ export default function Income() {
     }
   };
 
+  /** Re-records an older project payment as contract revenue: reverses it and posts it again, same date. */
+  const moveToContractRevenue = (entry: JournalEntry) => {
+    if (!window.confirm('Move this payment to contract revenue? It is reversed and recorded again with the same date and amount. Profit does not change.')) return;
+    setError('');
+    setSuccess('');
+    try {
+      ledger.reverse(entry.id, 'Moved to contract revenue', entry.date);
+      ledger.post({
+        date: entry.date,
+        description: entry.description,
+        sourceType: 'manual',
+        sourceId: `${PROJECT_RECEIPT_PREFIX}${Date.now()}`,
+        idempotencyKey: `move-to-contract-revenue:${entry.id}`,
+        reference: entry.reference,
+        lines: entry.lines.map((line) =>
+          line.account === ACC.otherIncome ? { ...line, account: ACC.contractRevenue } : line
+        ),
+      });
+      setSuccess('Payment moved to contract revenue.');
+      setEntries(ledger.getEntries());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to move this payment.');
+    }
+  };
+
   const entryAmount = (entry: JournalEntry) =>
     entry.lines
-      .filter((line) => line.account === ACC.otherIncome)
+      .filter((line) => line.account === ACC.otherIncome || (line.account === ACC.contractRevenue && receiptIds.has(entry.id)))
       .reduce((total, line) => total + line.credit - line.debit, 0);
 
   const entryProject = (entry: JournalEntry) => {
@@ -476,7 +524,7 @@ export default function Income() {
               setShowForm(true);
             }}
           >
-            <Plus size={16} /> Record other income
+            <Plus size={16} /> Record income
           </button>
         </div>}
       </div>
@@ -513,9 +561,11 @@ export default function Income() {
         <Metric
           icon={<HandCoins size={13} />}
           label="Client receipts"
-          value={money(totalCollected)}
+          value={money(totalCollected + directTotal)}
           note={
-            totalInvoiced > 0
+            directTotal > 0
+              ? `${money(directTotal)} paid directly on projects`
+              : totalInvoiced > 0
               ? `${collectedPct}% of invoiced amount collected`
               : 'No invoices issued yet'
           }
@@ -532,7 +582,7 @@ export default function Income() {
           icon={<Wallet size={13} />}
           label="Other income"
           value={money(otherIncomeTotal)}
-          note={`${otherIncomeEntries.length} transaction${otherIncomeEntries.length === 1 ? '' : 's'} recorded`}
+          note={`${otherIncomeEntries.length} transaction${otherIncomeEntries.length === 1 ? '' : 's'} with no project`}
           tone="violet"
         />
       </div>
@@ -542,8 +592,8 @@ export default function Income() {
           <div>
             <h3>Project income overview</h3>
             <p>
-              Project values come from Projects. Invoicing and collections come
-              from Client Invoices.
+              Received includes money received before the system, invoice
+              payments and payments recorded on this page.
             </p>
           </div>
         </div>
@@ -570,7 +620,7 @@ export default function Income() {
               <tbody>
                 {projectSummaries.map(({ project, invoiced, collected, outstanding }) => {
                   const progress =
-                    invoiced > 0 ? Math.min((collected / invoiced) * 100, 100) : 0;
+                    project.contractValue > 0 ? Math.min((collected / project.contractValue) * 100, 100) : 0;
 
                   return (
                     <tr key={project.id}>
@@ -587,7 +637,7 @@ export default function Income() {
                           <div className="progress-track">
                             <i style={{ width: `${progress}%` }} />
                           </div>
-                          <small>{progress.toFixed(0)}% of invoiced</small>
+                          <small>{progress.toFixed(0)}% of contract</small>
                         </div>
                       </td>
                       <td className="money-cell">
@@ -605,10 +655,10 @@ export default function Income() {
       <div className="panel projects-register">
         <div className="panel-heading projects-heading">
           <div>
-            <h3>Other income transactions</h3>
+            <h3>Income transactions</h3>
             <p>
-              Income recorded directly in this module, separate from client
-              invoices. {filteredEntries.length} record
+              Payments with a project count as received on that project.{' '}
+              {filteredEntries.length} record
               {filteredEntries.length === 1 ? '' : 's'} displayed.
             </p>
           </div>
@@ -643,17 +693,17 @@ export default function Income() {
           <Empty
             icon={<Wallet size={24} />}
             title={
-              otherIncomeEntries.length
+              incomeEntries.length
                 ? 'No matching income'
-                : 'No other income recorded yet'
+                : 'No income recorded yet'
             }
             message={
-              otherIncomeEntries.length
+              incomeEntries.length
                 ? 'Try another search term or project filter.'
-                : isAdmin ? 'Record income that is not a client invoice, such as interest or sundry receipts.' : 'Other income will appear here once the Admin records it.'
+                : isAdmin ? 'Record a client payment on a project, or income such as interest.' : 'Income will appear here once the Admin records it.'
             }
             action={
-              !otherIncomeEntries.length && isAdmin ? (
+              !incomeEntries.length && isAdmin ? (
                 <button
                   type="button"
                   className="primary-button"
@@ -675,11 +725,13 @@ export default function Income() {
                   <th>Payer</th>
                   <th>Reference</th>
                   <th className="num">Amount</th>
+                  {isAdmin && <th />}
                 </tr>
               </thead>
               <tbody>
                 {filteredEntries.map((entry) => {
                   const project = entryProject(entry);
+                  const canMove = isAdmin && receipts.some((r) => r.entry.id === entry.id && r.onOtherIncome);
                   const payer = entry.lines.find(
                     (line) => line.party
                   )?.party;
@@ -700,6 +752,15 @@ export default function Income() {
                       <td className="money-cell num">
                         <strong>{money(entryAmount(entry))}</strong>
                       </td>
+                      {isAdmin && (
+                        <td className="num">
+                          {canMove && (
+                            <button type="button" className="inc-move" onClick={() => moveToContractRevenue(entry)} title="Recorded as other income. Move it to contract revenue.">
+                              <ArrowRightLeft size={13} /> Move to contract revenue
+                            </button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -712,8 +773,9 @@ export default function Income() {
       <div className="inc-note">
         <strong>Accounting note:</strong> Client invoices and their payments
         are read from the Client Invoices register. This page does not post
-        them again. Other income recorded here is posted to the ledger as
-        debit Cash/Bank/Mobile Money and credit Other Income.
+        them again. A payment recorded here with a project is posted as
+        contract revenue and counts as received on that project. Without a
+        project it is posted as other income.
       </div>
 
       {showForm && isAdmin && (
@@ -733,7 +795,7 @@ export default function Income() {
             <div className="projects-modal-header">
               <div>
                 <div className="eyebrow">NEW INCOME</div>
-                <h3 id="income-form-title">Record other income</h3>
+                <h3 id="income-form-title">{form.projectId ? 'Client payment on project' : 'Record other income'}</h3>
               </div>
 
               <button
@@ -747,7 +809,8 @@ export default function Income() {
             </div>
 
             <p className="inc-sub" style={{ marginTop: 0, marginBottom: 14 }}>
-              Record income that is not a client invoice or client payment.
+              Choose a project for a client payment made without an invoice.
+              Leave it empty for other income, such as interest.
             </p>
 
             {error && (
@@ -823,7 +886,7 @@ export default function Income() {
                   onChange={(event) =>
                     setForm({ ...form, description: event.target.value })
                   }
-                  placeholder="e.g. Interest income"
+                  placeholder={form.projectId ? 'e.g. Second instalment' : 'e.g. Interest income'}
                 />
               </label>
 
@@ -849,6 +912,12 @@ export default function Income() {
                 />
               </label>
             </div>
+
+            {form.projectId && (
+              <p className="inc-hint">
+                This counts as received on the project and reduces its outstanding balance.
+              </p>
+            )}
 
             <div className="projects-form-actions">
               <button
