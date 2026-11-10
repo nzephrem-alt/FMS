@@ -4,6 +4,7 @@
  */
 import { isDirectCost } from './accounts';
 import type { JournalEntry } from './ledger';
+import { projectReceiptList } from './projectReceipts';
 
 export type WRProject = { id: string; projectName: string; client?: string; contractValue: number; totalReceived: number; status: string };
 export type WRCost = {
@@ -114,7 +115,13 @@ export function buildReport(input: WRInput): WReport {
   const total = projects.reduce((s, p) => s + p.cost, 0);
 
   // Client payments received in the period.
-  const receipts = input.invoices.filter((i) => !i.voided).flatMap((i) => (i.payments ?? []).filter((p) => p.date && inRange(p.date)).map((p) => ({ client: i.client, amount: Number(p.amount) || 0 })));
+  const direct = projectReceiptList(input.entries);
+  const clientOf = new Map(input.projects.map((p) => [p.id, p.client ?? '']));
+  const receipts = [
+    ...input.invoices.filter((i) => !i.voided).flatMap((i) => (i.payments ?? []).filter((p) => p.date && inRange(p.date)).map((p) => ({ client: i.client, amount: Number(p.amount) || 0 }))),
+    // Client payments recorded on the Income page against a project.
+    ...direct.filter((r) => inRange(r.date)).map((r) => ({ client: r.party || clientOf.get(r.projectId) || projectName(r.projectId), amount: r.amount })),
+  ];
   const clientReceipts = receipts.reduce((s, r) => s + r.amount, 0);
 
   const sentences: string[] = [];
@@ -159,6 +166,7 @@ export function buildReport(input: WRInput): WReport {
   input.invoices.filter((i) => !i.voided && i.projectId).forEach((i) => (i.payments ?? []).forEach((p) => {
     if (!p.date || p.date <= to) invoicePaid[i.projectId as string] = (invoicePaid[i.projectId as string] ?? 0) + (Number(p.amount) || 0);
   }));
+  direct.filter((r) => r.date <= to).forEach((r) => { invoicePaid[r.projectId] = (invoicePaid[r.projectId] ?? 0) + r.amount; });
   input.projects.filter((p) => p.status !== 'Cancelled').forEach((p) => {
     const received = (Number(p.totalReceived) || 0) + (invoicePaid[p.id] ?? 0);
     const costs = directCosts[p.id] ?? 0;
