@@ -151,6 +151,7 @@ const readArray = <T,>(key: string): T[] => {
 /** Runs the sync from the saved staff and payments, for pages other than Staff & Payroll. */
 export function syncStoredPayrollAccruals(ledger: Ledger = defaultLedger): void {
   try {
+    if (localStorage.getItem(STAFF_KEY) === null) return; // nothing loaded yet: never clear the ledger by mistake
     const staff = readArray<StoredStaff>(STAFF_KEY)
       .filter((s): s is StoredStaff & { id: string; name: string } => typeof s.id === 'string' && typeof s.name === 'string')
       .map((s): AccrualStaff => ({
