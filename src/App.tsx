@@ -19,6 +19,7 @@ import Expenses from "./pages/Expenses";
 import Transactions from "./pages/Transactions";
 import Accounting from "./pages/Accounting";
 import FinancialReports from "./pages/FinancialReports";
+import FixedAssets from "./pages/FixedAssets";
 import Settings from "./pages/Settings";
 
 type Page =
@@ -31,6 +32,7 @@ type Page =
   | "Expenses"
   | "Staff & Payroll"
   | "Cash & Bank"
+  | "Fixed Assets"
   | "Transactions"
   | "Accounting"
   | "Financial Reports"
@@ -149,6 +151,9 @@ case "Transactions":
 
         case "Financial Reports":
         return <FinancialReports />;
+
+      case "Fixed Assets":
+        return <FixedAssets />;
 
       case "Settings":
         return <Settings />;
