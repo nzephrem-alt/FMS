@@ -12,6 +12,7 @@ export type SourceType =
   | 'client_payment'
   | 'expense'
   | 'payroll'
+  | 'fixed_asset'
   | 'manual'
   | 'opening_balance';
 
