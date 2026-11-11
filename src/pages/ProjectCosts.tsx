@@ -31,6 +31,8 @@ const COSTS_KEY = 'ista-fortis-project-costs-v1';
 const PROJECTS_KEY = 'ista-fortis-projects-v1';
 const SITE_LABOUR_KEY = 'ista-fortis-site-labour-v1';
 const categories: CostCategory[] = ['Labour', 'Materials', 'Equipment', 'Transport', 'Site expenses', 'Other'];
+/** Name shown on screen. "Equipment" is hired equipment (a cost); owned equipment is on the Fixed Assets page. The saved value stays the same. */
+const categoryLabel = (c: string) => (c === 'Equipment' ? 'Equipment hire' : c);
 const methods: PaymentMethod[] = ['Cash', 'Bank transfer', 'Mobile money', 'Cheque', 'Other'];
 const blankForm: CostForm = { projectId: '', projectName: '', date: new Date().toISOString().slice(0, 10), category: 'Materials', labourType: '', description: '', supplier: '', amount: 0, amountPaid: 0, paymentMethod: 'Bank transfer', reference: '', notes: '' };
 const defaultImportOptions: ImportOptions = { paidDefault: 'paid', defaultMethod: 'Cash', fallbackProjectId: '', fallbackDate: '' };
@@ -521,7 +523,7 @@ export default function ProjectCosts() {
         <div className="cost-filters">
           <label className="projects-search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search costs..." /></label>
           <select value={projectFilter} onChange={e => setProjectFilter(e.target.value)} aria-label="Filter by project"><option value="All">All projects</option>{projects.map(p => <option key={p.id} value={p.id}>{p.projectName}</option>)}</select>
-          <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} aria-label="Filter by category"><option value="All">All categories</option>{categories.map(c => <option key={c}>{c}</option>)}</select>
+          <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} aria-label="Filter by category"><option value="All">All categories</option>{categories.map(c => <option key={c} value={c}>{categoryLabel(c)}</option>)}</select>
           {usedLabourTypes.length > 0 && <select value={labourFilter} onChange={e => setLabourFilter(e.target.value)} aria-label="Filter by labour type"><option value="All">All labour types</option>{usedLabourTypes.map(t => <option key={t}>{t}</option>)}</select>}
           <select value={period} onChange={e => setPeriod(e.target.value)} aria-label="Filter by period"><option value="All">All time</option><option>This month</option><option>This year</option></select>
           <button className="projects-secondary-button" onClick={() => setShowReversed(v => !v)}>{showReversed ? <Receipt size={15} /> : <RotateCcw size={15} />} <span>{showReversed ? 'View active costs' : 'View reversed records'}</span></button>
@@ -556,7 +558,7 @@ export default function ProjectCosts() {
               return <tr key={c.id} className={c.reversed ? 'is-reversed' : undefined}>
                 <td className="money-cell"><strong>{c.date}</strong><span className="cost-sub">{c.id}</span></td>
                 <td style={{ minWidth: 180 }}><strong>{c.projectName}</strong><span className="cost-sub">{c.activity ? `${c.activity} · ` : ''}{c.description}</span></td>
-                <td>{c.category}{c.category === 'Labour' && c.labourType && <span className="cost-sub">{c.labourType}</span>}</td>
+                <td>{categoryLabel(c.category)}{c.category === 'Labour' && c.labourType && <span className="cost-sub">{c.labourType}</span>}</td>
                 <td>{c.supplier || '—'}</td>
                 <td className="money-cell"><strong>{money(c.amount)}</strong>{feesOf(c) > 0 && <span className="cost-sub">+ {money(feesOf(c))} MoMo fee</span>}</td>
                 <td><div className="received-cell"><strong>{money(c.amountPaid)}</strong><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><small>{progress.toFixed(0)}% paid</small></div></td>
@@ -577,7 +579,7 @@ export default function ProjectCosts() {
           <div className="projects-form-grid">
             <label className="projects-field field-wide">Project *<select required value={form.projectId} onChange={e => { const p = projects.find(x => x.id === e.target.value); setField('projectId', e.target.value); setField('projectName', p?.projectName ?? ''); }}><option value="">Select project</option>{projects.map(p => <option key={p.id} value={p.id}>{p.projectName} ({p.id})</option>)}</select></label>
             <label className="projects-field">Date *<input required type="date" value={form.date} onChange={e => setField('date', e.target.value)} /></label>
-            <label className="projects-field">Cost category *<select value={form.category} onChange={e => setField('category', e.target.value as CostCategory)}>{categories.map(c => <option key={c}>{c}</option>)}</select></label>
+            <label className="projects-field">Cost category *<select value={form.category} onChange={e => setField('category', e.target.value as CostCategory)}>{categories.map(c => <option key={c} value={c}>{categoryLabel(c)}</option>)}</select></label>
             {form.category === 'Labour' && <label className="projects-field field-wide">Labour type<input list="labour-types" value={form.labourType ?? ''} onChange={e => setField('labourType', e.target.value)} placeholder="e.g. Masons, Helpers, Foreman, or type your own" /><datalist id="labour-types">{labourOptions.map(t => <option key={t} value={t} />)}</datalist></label>}
             <label className="projects-field field-wide">Activity on site<input value={form.activity ?? ''} onChange={e => setField('activity', e.target.value)} placeholder="Optional, e.g. Roofing, Walling, Concrete channel casting" /></label>
             <label className="projects-field field-wide">Description *<input required value={form.description} onChange={e => setField('description', e.target.value)} placeholder="e.g. Cement purchase for foundation works" /></label>
@@ -601,7 +603,7 @@ export default function ProjectCosts() {
         <span className={`project-status ${statusClass(viewCost)}`}>{statusIcon(viewCost)}{viewCost.reversed ? 'Reversed' : paymentStatusOf(viewCost)}</span>
         <div className="project-detail-grid">
           <Detail label="Project" value={viewCost.projectName} /><Detail label="Date" value={viewCost.date} />
-          <Detail label="Category" value={viewCost.category} />
+          <Detail label="Category" value={categoryLabel(viewCost.category)} />
           {viewCost.activity && <Detail label="Activity" value={viewCost.activity} />}
           {viewCost.category === 'Labour' && <Detail label="Labour type" value={viewCost.labourType || '—'} />}
           <Detail label="Supplier / recipient" value={viewCost.supplier || '—'} />
@@ -739,7 +741,7 @@ export default function ProjectCosts() {
                   <td><span className={`import-badge ${row.action}`}>{importActionLabel[row.action]}</span></td>
                   <td>{row.cost.date || '—'}</td>
                   <td><strong>{row.cost.projectName || '—'}</strong><div className="import-sub">{row.cost.projectId}</div></td>
-                  <td>{row.cost.category}{row.cost.labourType && <div className="import-sub">{row.cost.labourType}</div>}</td>
+                  <td>{categoryLabel(row.cost.category)}{row.cost.labourType && <div className="import-sub">{row.cost.labourType}</div>}</td>
                   <td>{row.cost.description}</td>
                   <td className="money-cell">{money(row.cost.amount)}</td>
                   <td className="money-cell">{money(row.cost.amountPaid)}</td>
