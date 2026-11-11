@@ -18,6 +18,7 @@ import {
   FileText,
   ClipboardList,
   LogOut,
+  Forklift,
 } from 'lucide-react';
 
 type SidebarProps = {
@@ -45,6 +46,7 @@ const navGroups = [
     title: 'FINANCE',
     items: [
       { label: 'Cash & Bank', icon: Landmark },
+      { label: 'Fixed Assets', icon: Forklift },
       { label: 'Transactions', icon: ArrowLeftRight },
       { label: 'Accounting', icon: ChartNoAxesCombined },
       { label: 'Financial Reports', icon: FileText },
