@@ -395,7 +395,56 @@ export const TABLES: TableSpec[] = [
       ...(r.method == null ? {} : { method: text(r.method) }),
       paidAt: isoStamp(r.paid_at),
     }),
-  },  {
+  },
+  {
+    // Fixed assets: one row per piece of equipment or other asset the company owns (or owned).
+    table: 'fixed_assets',
+    key: 'ista-fortis-fixed-assets-v1',
+    label: 'Fixed assets',
+    toRow: (a) => {
+      if (!isObj(a) || typeof a.id !== 'string' || !a.id) return null;
+      return {
+        id: a.id,
+        name: text(a.name),
+        category: text(a.category),
+        purchase_date: isoDate(a.purchaseDate),
+        cost: amount(a.cost),
+        supplier: text(a.supplier),
+        serial_number: text(a.serialNumber),
+        location: text(a.location),
+        useful_life_years: amount(a.usefulLifeYears),
+        residual_value: amount(a.residualValue),
+        paid_with: text(a.paidWith),
+        momo_fee: amount(a.momoFee),
+        status: text(a.status),
+        disposal_date: isoDate(a.disposalDate),
+        disposal_amount: amount(a.disposalAmount),
+        disposal_method: a.disposalMethod == null ? null : text(a.disposalMethod),
+        notes: text(a.notes),
+        recorded_at: stamp(a.createdAt) ?? new Date().toISOString(),
+      };
+    },
+    fromRow: (r) => ({
+      id: text(r.id),
+      name: text(r.name),
+      category: text(r.category),
+      purchaseDate: text(r.purchase_date),
+      cost: amount(r.cost),
+      supplier: text(r.supplier),
+      serialNumber: text(r.serial_number),
+      location: text(r.location),
+      usefulLifeYears: amount(r.useful_life_years),
+      residualValue: amount(r.residual_value),
+      paidWith: text(r.paid_with),
+      ...(amount(r.momo_fee) > 0 ? { momoFee: amount(r.momo_fee) } : {}),
+      status: text(r.status),
+      ...(isoDate(r.disposal_date) ? { disposalDate: text(r.disposal_date), disposalAmount: amount(r.disposal_amount) } : {}),
+      ...(r.disposal_method == null ? {} : { disposalMethod: text(r.disposal_method) }),
+      notes: text(r.notes),
+      createdAt: isoStamp(r.recorded_at),
+    }),
+  },
+  {
     // The ledger: one row per journal entry. Posted entries are never changed; mistakes are reversed.
     table: 'journal_entries',
     key: 'ista-fortis-ledger-v1',
