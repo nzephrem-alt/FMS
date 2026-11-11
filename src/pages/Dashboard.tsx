@@ -11,6 +11,7 @@ import { syncStoredInvoices, syncStoredProjectCosts } from '../lib/postings';
 import { useLedgerEntries } from '../lib/useLedger';
 import { projectReceiptTotals } from '../lib/projectReceipts';
 import { syncStoredPayrollAccruals } from '../lib/payrollAccruals';
+import { syncStoredFixedAssets } from '../lib/fixedAssets';
 import { useAccess } from '../lib/access';
 import type { JournalEntry } from '../lib/ledger';
 
@@ -117,7 +118,7 @@ function Dashboard({ onNavigate }: { onNavigate?: (page: string) => void }) {
   useEffect(() => { syncStoredProjectCosts(); syncStoredInvoices(); }, []);
   // Record salaries owed for months that have ended (Admins only, as it writes to the ledger).
   const { isAdmin } = useAccess();
-  useEffect(() => { if (isAdmin) syncStoredPayrollAccruals(); }, [isAdmin]);
+  useEffect(() => { if (isAdmin) { syncStoredPayrollAccruals(); syncStoredFixedAssets(); } }, [isAdmin]);
 
   const entries = useLedgerEntries();
   const projects = useMemo(() => readList<ProjectRow>(PROJECTS_KEY), []);
