@@ -10,6 +10,7 @@ import { useAccess } from '../lib/access';
 import { buildReport, rwf, shortDay } from '../lib/weeklyReport';
 import { projectReceiptTotals } from '../lib/projectReceipts';
 import { syncStoredPayrollAccruals } from '../lib/payrollAccruals';
+import { syncStoredFixedAssets } from '../lib/fixedAssets';
 import type { WRCost, WRLabour } from '../lib/weeklyReport';
 
 const PROJECTS_KEY = 'ista-fortis-projects-v1';
@@ -55,6 +56,7 @@ const SOURCE_LABELS: Record<string, string> = {
   project_cost: 'Project costs paid at purchase',
   expense: 'Expenses paid',
   payroll: 'Salaries paid',
+  fixed_asset: 'Equipment bought and sold',
   opening_balance: 'Opening balances',
   manual: 'Other entries',
 };
@@ -283,7 +285,7 @@ export default function FinancialReports() {
   const labour = useMemo(() => readLabour(), []);
   const { name: preparedBy, isAdmin } = useAccess();
   // Record salaries owed for months that have ended (Admins only, as it writes to the ledger).
-  useEffect(() => { if (isAdmin) syncStoredPayrollAccruals(); }, [isAdmin]);
+  useEffect(() => { if (isAdmin) { syncStoredPayrollAccruals(); syncStoredFixedAssets(); } }, [isAdmin]);
   const [priorities, setPriorities] = useState('');
   const [pdfBusy, setPdfBusy] = useState(false);
 
