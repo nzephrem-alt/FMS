@@ -72,7 +72,7 @@ export function buildReport(input: WRInput): WReport {
   input.costs.filter((c) => !c.reversed && inRange(c.date)).forEach((c) => {
     rows.push({
       date: c.date, projectId: c.projectId, project: projectName(c.projectId, c.projectName),
-      activity: c.activity?.trim() || c.category,
+      activity: c.activity?.trim() || (c.category === 'Equipment' ? 'Equipment hire' : c.category),
       description: [c.description, c.notes?.trim()].filter(Boolean).join(' - '),
       amount: Math.round(c.amount + (c.momoFee ?? 0)),
     });
@@ -144,7 +144,7 @@ export function buildReport(input: WRInput): WReport {
   // Unpaid balances on project costs, by supplier or worker.
   const owed = input.costs
     .filter((c) => !c.reversed && c.date <= to && c.amount - c.amountPaid > 0)
-    .map((c) => ({ who: c.supplier?.trim() || c.description, where: projectName(c.projectId, c.projectName), what: c.activity?.trim() || c.category, amount: c.amount - c.amountPaid }))
+    .map((c) => ({ who: c.supplier?.trim() || c.description, where: projectName(c.projectId, c.projectName), what: c.activity?.trim() || (c.category === 'Equipment' ? 'Equipment hire' : c.category), amount: c.amount - c.amountPaid }))
     .sort((a, b) => b.amount - a.amount);
   if (owed.length) {
     const list = owed.slice(0, 5).map((o) => `${o.who} ${rwf(o.amount)} (${o.where} ${o.what.toLowerCase()})`).join(', ');
