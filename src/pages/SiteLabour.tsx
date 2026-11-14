@@ -243,6 +243,11 @@ const LABOUR_CSS = `
 .projects-module .sl-editor-total{margin-top:14px;padding:12px 14px;border-radius:12px;background:#eef8f2;color:#3f5a4c;font-size:12.5px;display:flex;flex-wrap:wrap;gap:6px 18px}
 .projects-module .sl-help{margin:8px 0 0;font-size:11px;color:var(--muted);line-height:1.5}
 .projects-module .sl-pay-many{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}
+.projects-module .sl-pick{display:inline-flex;align-items:center;gap:5px;margin-top:4px;padding:3px 8px;border:1px solid #f0b35a;border-radius:8px;background:#fff8ec;color:#7a4c14;font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+.projects-module .sl-pick.on{background:#d5f56b;border-color:#b9dc45;color:#1d2b12}
+.projects-module .sl-pick input{margin:0;accent-color:#1f7a4f}
+.projects-module .sl-picking th.picked,.projects-module .sl-picking td.picked{background:#f6fbe6}
+.projects-module .sl-pick-hint{flex-basis:100%;text-align:right;font-size:11px;color:var(--muted)}
 @media(max-width:600px){.projects-module .sl-pay-many{width:100%}.projects-module .sl-pay-many>button{flex:1 1 100%;justify-content:center}}
 .projects-module .sl-pay-info{margin:0 0 14px;padding:12px 14px;border-radius:12px;background:#fde5c4;color:#7a4c14;font-size:12.5px;line-height:1.6}
 .projects-module .sl-stack{display:grid;gap:12px}
@@ -317,6 +322,9 @@ export default function SiteLabour() {
   const [payError, setPayError] = useState('');
   const [printMode, setPrintMode] = useState<PrintMode | null>(null);
   const [notice, setNotice] = useState('');
+  // Choosing days to pay together (one payment, one MoMo fee)
+  const [picking, setPicking] = useState(false);
+  const [pickedDays, setPickedDays] = useState<string[]>([]);
 
   useEffect(() => { localStorage.setItem(STORE_KEY, JSON.stringify(store)); }, [store]);
 
@@ -340,6 +348,8 @@ export default function SiteLabour() {
   }, [printMode]);
 
   const project = projects.find((p) => p.id === projectId);
+  // A new week or project starts a new choice of days.
+  useEffect(() => { setPickedDays([]); setPicking(false); }, [weekStart, projectId]);
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
   const today = todayIso();
   const weekEnd = days[6];
@@ -366,6 +376,9 @@ export default function SiteLabour() {
   const weekAwaiting = weekTotal - weekPaid;
   const allAwaiting = projectEntries.filter((e) => !e.paid);
   const weekUnpaid = weekEntries.filter((e) => !e.paid);
+  const pickedUnpaid = weekUnpaid.filter((e) => pickedDays.includes(e.date));
+  const stopPicking = () => { setPicking(false); setPickedDays([]); };
+  const togglePicked = (date: string) => setPickedDays((old) => (old.includes(date) ? old.filter((d) => d !== date) : [...old, date].sort()));
   const knownWorkers = useMemo(() => {
     const seen = new Map<string, string>();
     [...projectEntries].sort((a, b) => b.date.localeCompare(a.date)).forEach((e) => { if (!seen.has(norm(e.worker))) seen.set(norm(e.worker), e.worker); });
@@ -494,6 +507,7 @@ export default function SiteLabour() {
     }
     if (failure) { setPayError(`Paid ${count} of ${payEntries.length}. Stopped because: ${failure}`); return; }
     setPayDialog(null);
+    stopPicking();
   };
 
   /**
@@ -592,12 +606,23 @@ export default function SiteLabour() {
           </div>
           {isAdmin && (weekUnpaid.length > 0 || allAwaiting.length > 0) && (
             <div className="sl-pay-many">
+              {picking ? <>
+                <button type="button" className="projects-secondary-button" onClick={stopPicking}><X size={15} /> Cancel</button>
+                <button type="button" className="primary-button" onClick={() => openPay(pickedUnpaid.map((e) => e.id))} disabled={!pickedUnpaid.length}>
+                  <Wallet size={15} /> {pickedDays.length ? `Pay ${pickedDays.length} selected day${pickedDays.length === 1 ? '' : 's'} (${money(sum(pickedUnpaid))})` : 'Pay selected days'}
+                </button>
+                <span className="sl-pick-hint">Tick the days to pay together. Everyone still unpaid on those days is included, with one MoMo fee.</span>
+              </> : <>
+              {weekUnpaid.length > 0 && <button type="button" className="projects-secondary-button" onClick={() => setPicking(true)}>
+                <CalendarDays size={15} /> Choose days to pay
+              </button>}
               <button type="button" className="projects-secondary-button" onClick={() => openPay(weekUnpaid.map((e) => e.id))} disabled={!weekUnpaid.length}>
                 <Wallet size={15} /> Pay this week{weekUnpaid.length ? ` (${money(sum(weekUnpaid))})` : ''}
               </button>
               <button type="button" className="primary-button" onClick={() => openPay(allAwaiting.map((e) => e.id))} disabled={!allAwaiting.length}>
                 <Wallet size={15} /> Pay all awaiting{allAwaiting.length ? ` (${money(sum(allAwaiting))})` : ''}
               </button>
+              </>}
             </div>
           )}
         </div>
@@ -609,7 +634,7 @@ export default function SiteLabour() {
             action={isAdmin && <button type="button" className="primary-button" onClick={() => openEditor(today >= weekStart && today <= weekEnd ? today : weekStart)}><Plus size={16} /> Record day</button>} />
         ) : (
           <div className="sl-wrap">
-            <table className="sl-table">
+            <table className={`sl-table${picking ? ' sl-picking' : ''}`}>
               <thead>
                 <tr>
                   <th className="left sticky">Worker</th>
@@ -617,15 +642,20 @@ export default function SiteLabour() {
                     const list = dayEntries(d);
                     const unpaid = list.filter((e) => !e.paid);
                     return (
-                      <th key={d}>
+                      <th key={d} className={picking && pickedDays.includes(d) ? 'picked' : undefined}>
                         <div className={`sl-day${d === today ? ' today' : ''}`}>
                           <b>{WEEKDAYS[i]} {shortDate(d)}</b>
                           {activityOf(d) && <i>{activityOf(d)}</i>}
-                          <div className="sl-day-tools">
+                          {picking && unpaid.length > 0 && (
+                            <label className={`sl-pick${pickedDays.includes(d) ? ' on' : ''}`}>
+                              <input type="checkbox" checked={pickedDays.includes(d)} onChange={() => togglePicked(d)} /> {plain(sum(unpaid))}
+                            </label>
+                          )}
+                          {!picking && <div className="sl-day-tools">
                             {isAdmin && <button type="button" className="sl-mini" onClick={() => openEditor(d)} title={list.length ? 'Edit this day' : 'Record this day'}>{list.length ? <><Pencil size={11} /> Edit</> : <><Plus size={11} /> Add</>}</button>}
                             {isAdmin && unpaid.length > 0 && <button type="button" className="sl-mini" onClick={() => openPay(unpaid.map((e) => e.id))} title="Pay everyone still unpaid on this day"><Check size={11} /> Pay all</button>}
                             {list.length > 0 && <button type="button" className="sl-mini" onClick={() => setPrintMode({ kind: 'day', date: d })} title="Export this day as PDF" aria-label={`Export ${shortDate(d)} as PDF`}><Printer size={11} /></button>}
-                          </div>
+                          </div>}
                         </div>
                       </th>
                     );
@@ -652,9 +682,10 @@ export default function SiteLabour() {
                       <td className="left sticky sl-worker"><strong>{w.name}</strong></td>
                       {days.map((d) => {
                         const e = cellMap.get(`${w.key}|${d}`);
-                        if (!e) return <td key={d}><span className="sl-none">—</span></td>;
+                        const pickedCell = picking && pickedDays.includes(d) ? 'picked' : undefined;
+                        if (!e) return <td key={d} className={pickedCell}><span className="sl-none">—</span></td>;
                         return (
-                          <td key={d}>
+                          <td key={d} className={pickedCell}>
                             <span className="sl-cell">
                               <span className="sl-rate">{plain(e.rate)}</span>
                               <button type="button" className={`sl-tick${e.paid ? ' paid' : ''}${isAdmin ? '' : ' readonly'}`}
