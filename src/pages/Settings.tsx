@@ -323,7 +323,7 @@ function teamError(message: string, code?: string): string {
 }
 
 function inviteText(m: { email: string; full_name: string; role: Role }): string {
-  const site = typeof window !== 'undefined' ? window.location.origin : '';
+  const site = typeof window !== 'undefined' ? `${window.location.origin}/app/` : '';
   const hello = m.full_name.trim() ? `Hello ${m.full_name.trim()},` : 'Hello,';
   const access = m.role === 'admin' ? 'Admin access' : 'view access';
   return `${hello}\n\nYou have been given ${access} to the ISTA FORTIS Financial Management System.\n\n1. Open ${site}\n2. Choose "Create account" and use this email: ${m.email}\n3. Open the confirmation email we send you, then sign in.`;
