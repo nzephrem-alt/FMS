@@ -123,7 +123,7 @@ export default function AuthPage({ initialMode = 'signin', onPasswordUpdated }: 
         if (e) throw e;
         // The app switches to the dashboard as soon as the session exists.
       } else if (mode === 'signup') {
-        const { data, error: e } = await supabase.auth.signUp({ email: cleanEmail, password, options: { emailRedirectTo: window.location.origin } });
+        const { data, error: e } = await supabase.auth.signUp({ email: cleanEmail, password, options: { emailRedirectTo: `${window.location.origin}/app/` } });
         if (e) throw e;
         if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
           setError('An account with this email already exists. Sign in instead.');
@@ -132,7 +132,7 @@ export default function AuthPage({ initialMode = 'signin', onPasswordUpdated }: 
           setPassword(''); setConfirm('');
         }
       } else if (mode === 'forgot') {
-        const { error: e } = await supabase.auth.resetPasswordForEmail(cleanEmail, { redirectTo: window.location.origin });
+        const { error: e } = await supabase.auth.resetPasswordForEmail(cleanEmail, { redirectTo: `${window.location.origin}/app/` });
         if (e) throw e;
         setSuccess(`If ${cleanEmail} has an account, a reset link is on its way. Check your inbox.`);
       } else {
