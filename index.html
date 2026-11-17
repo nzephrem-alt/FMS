@@ -250,9 +250,9 @@ footer .f-about p{margin-top:16px;max-width:300px}
 }
 @media (max-width:900px){
   .burger{display:grid}
-  .menu{position:fixed;left:0;right:0;top:122px;flex-direction:column;align-items:stretch;gap:0;background:#fff;border-top:1px solid var(--line);box-shadow:0 20px 30px -20px rgba(0,0,0,.3);max-height:0;overflow:hidden;transition:max-height .3s ease}
+  .menu{position:fixed;left:0;right:0;top:122px;flex-direction:column;align-items:stretch;gap:0;background:#fff;border-top:0;box-shadow:none;max-height:0;overflow:hidden;visibility:hidden;transition:max-height .3s ease,visibility 0s linear .3s}
   .menu a{padding:14px 20px;border-bottom:1px solid var(--line)}
-  .nav-open .menu{max-height:420px}
+  .nav-open .menu{max-height:420px;visibility:visible;border-top:1px solid var(--line);box-shadow:0 20px 30px -20px rgba(0,0,0,.3);transition:max-height .3s ease,visibility 0s}
   .topbar .r a.small{display:none}
   .about-cards{grid-template-columns:1fr;max-width:520px}
   .acard,.acard.hi{min-height:0}
@@ -370,7 +370,7 @@ footer .f-about p{margin-top:16px;max-width:300px}
   <div class="wrap">
     <div class="heading reveal">
       <h2>About <span>ISTA FORTIS</span></h2>
-      <p>A dynamic construction company committed to excellence, innovation and reliability across all its operations.</p>
+      <p>A dynamic construction company established in 2026 in Gikondo, Kigali, committed to excellence, innovation and reliability across all its operations.</p>
     </div>
     <div class="about-cards">
       <article class="acard reveal">
