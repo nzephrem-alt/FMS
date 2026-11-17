@@ -79,12 +79,23 @@ header.scrolled{box-shadow:0 6px 20px -10px rgba(0,0,0,.18)}
 .hero{position:relative;height:min(640px,86vh);min-height:480px;overflow:hidden;background:var(--dark)}
 .slide{position:absolute;inset:0;background-size:cover;background-position:center;opacity:0;transform:scale(1.06);transition:opacity 1s ease,transform 6s ease}
 .slide.on{opacity:1;transform:scale(1)}
-.hero::before{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(180deg,rgba(0,0,0,.45),rgba(0,0,0,.35) 60%,rgba(0,0,0,.2))}
+.hero::before{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(180deg,rgba(0,0,0,.58),rgba(0,0,0,.48) 60%,rgba(0,0,0,.3))}
 .hero-text{position:relative;z-index:2;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#fff;padding:0 20px 90px}
 .hero-text .since{font-family:Poppins,sans-serif;font-size:clamp(17px,2.2vw,22px);font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 .hero-text h1{color:#fff;font-size:clamp(38px,6.4vw,66px);font-weight:700;text-transform:uppercase;letter-spacing:.01em;margin-top:6px;text-shadow:0 2px 18px rgba(0,0,0,.25)}
 .hero-text p{max-width:600px;margin-top:12px;font-size:15.5px;color:#eef3f1}
 .hero-text .btn{margin-top:26px}
+.hero-text{display:grid;place-items:center}
+.msg{grid-area:1/1;display:flex;flex-direction:column;align-items:center;opacity:0;visibility:hidden;transform:translateY(14px);transition:opacity .7s ease,transform .7s ease,visibility 0s linear .7s}
+.msg.on{opacity:1;visibility:visible;transform:none;transition:opacity .7s ease .2s,transform .7s ease .2s,visibility 0s}
+.msg .h{color:#fff;font-family:Poppins,sans-serif;font-size:clamp(38px,6.4vw,66px);font-weight:700;text-transform:uppercase;letter-spacing:.01em;line-height:1.2;margin:6px 0 0;text-shadow:0 2px 18px rgba(0,0,0,.25);max-width:980px}
+.social{display:flex;align-items:center;gap:6px}
+.social a{width:30px;height:30px;display:grid;place-items:center;border-radius:50%;color:#c9d1cd;transition:background .2s ease,color .2s ease}
+.social a:hover{background:var(--accent);color:#fff}
+.social svg{width:15px;height:15px}
+footer .social{margin-top:18px;gap:10px}
+footer .social a{width:38px;height:38px;border:1px solid rgba(255,255,255,.18);color:#fff}
+footer .social svg{width:17px;height:17px}
 .arrow{position:absolute;top:50%;z-index:3;width:30px;height:44px;margin-top:-60px;display:grid;place-items:center;background:var(--accent);color:#fff;border:0;cursor:pointer}
 .arrow svg{width:16px;height:16px}
 .arrow.prev{left:0}.arrow.next{right:0;background:rgba(0,0,0,.35)}
@@ -270,6 +281,7 @@ footer .f-about p{margin-top:16px;max-width:300px}
   .wrap{width:calc(100% - 32px)}
   .topbar .l .hide-sm,.topbar .l>span{display:none}
   .topbar .l{flex-wrap:nowrap}
+  .topbar .social{display:none}
   .arrow{display:none}
   .topbar .inquiry{padding:0 16px}
   .nav{height:72px}.brand img{height:46px}
@@ -307,6 +319,7 @@ footer .f-about p{margin-top:16px;max-width:300px}
       <a class="hide-sm" href="mailto:fortisgroupltd1@gmail.com"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>fortisgroupltd1@gmail.com</a>
     </div>
     <div class="r">
+      <div class="social"><a href="https://www.instagram.com/istafortisgroup/" target="_blank" rel="noopener" aria-label="ISTA FORTIS on Instagram"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg></a><a href="https://www.tiktok.com/@istafortisgroup" target="_blank" rel="noopener" aria-label="ISTA FORTIS on TikTok"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.6 5.82A4.28 4.28 0 0 1 15.54 3h-3.09v12.4a2.59 2.59 0 0 1-2.59 2.5c-1.42 0-2.6-1.16-2.6-2.6 0-1.72 1.66-3.01 3.37-2.48V9.66c-3.45-.46-6.47 2.22-6.47 5.64 0 3.33 2.76 5.7 5.69 5.7 3.14 0 5.69-2.55 5.69-5.7V9.01a7.35 7.35 0 0 0 4.3 1.38V7.3s-1.88.09-3.24-1.48Z"/></svg></a></div>
       <a class="small" href="/app/">Staff login</a>
       <a class="inquiry" href="#contact">Inquiry</a>
     </div>
@@ -336,10 +349,24 @@ footer .f-about p{margin-top:16px;max-width:300px}
   <div class="slide" style="background-image:url('/hero.jpg')" role="img" aria-label="ISTA FORTIS foundation works on site"></div>
   <div class="slide" style="background-image:url('/p2.jpg')" role="img" aria-label="Aerial render of a residential building"></div>
   <div class="hero-text">
-    <div class="since">Since day 1</div>
-    <h1>Strength That Lasts</h1>
-    <p>Construction, engineering and design solutions in Rwanda, delivered with quality, integrity and on time, from the foundation to the finishing.</p>
-    <a class="btn" href="#contact">Contact us</a>
+    <div class="msg on">
+      <div class="since">Since day 1</div>
+      <h1 class="h">Strength That Lasts</h1>
+      <p>Construction, engineering and design solutions in Rwanda, delivered with quality, integrity and on time, from the foundation to the finishing.</p>
+      <a class="btn" href="#contact">Contact us</a>
+    </div>
+    <div class="msg" aria-hidden="true">
+      <div class="since">Building construction</div>
+      <h2 class="h">From foundation to finish</h2>
+      <p>We manage residential and commercial projects from the foundation to completion, maintaining strict quality and safety standards on every site.</p>
+      <a class="btn" href="#services" tabindex="-1">Our services</a>
+    </div>
+    <div class="msg" aria-hidden="true">
+      <div class="since">Architecture &amp; design</div>
+      <h2 class="h">Designed to inspire, built to last</h2>
+      <p>Innovative architectural designs with accurate structural analysis, tailored to your needs and compliant with engineering standards.</p>
+      <a class="btn" href="#projects" tabindex="-1">View our projects</a>
+    </div>
   </div>
   <button class="arrow prev" id="prev" aria-label="Previous slide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
   <button class="arrow next" id="next" aria-label="Next slide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
@@ -371,7 +398,7 @@ footer .f-about p{margin-top:16px;max-width:300px}
   <div class="wrap">
     <div class="heading reveal">
       <h2>About <span>ISTA FORTIS</span></h2>
-      <p>A dynamic construction company established in 2026 in Gikondo, Kigali, committed to excellence, innovation and reliability across all its operations.</p>
+      <p>A dynamic construction company based in Kigali, committed to excellence, innovation and reliability across all its operations.</p>
     </div>
     <div class="about-cards">
       <article class="acard reveal">
@@ -525,7 +552,7 @@ footer .f-about p{margin-top:16px;max-width:300px}
 <footer>
   <div class="wrap">
     <div class="f-grid">
-      <div class="f-about"><img src="/istafortis-white-logo.png" alt="ISTA FORTIS Group Ltd"><p>Construction, engineering, design, concrete products and interiors in Rwanda. Strength That Lasts.</p></div>
+      <div class="f-about"><img src="/istafortis-white-logo.png" alt="ISTA FORTIS Group Ltd"><p>Construction, engineering, design, concrete products and interiors in Rwanda. Strength That Lasts.</p><div class="social"><a href="https://www.instagram.com/istafortisgroup/" target="_blank" rel="noopener" aria-label="ISTA FORTIS on Instagram"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg></a><a href="https://www.tiktok.com/@istafortisgroup" target="_blank" rel="noopener" aria-label="ISTA FORTIS on TikTok"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.6 5.82A4.28 4.28 0 0 1 15.54 3h-3.09v12.4a2.59 2.59 0 0 1-2.59 2.5c-1.42 0-2.6-1.16-2.6-2.6 0-1.72 1.66-3.01 3.37-2.48V9.66c-3.45-.46-6.47 2.22-6.47 5.64 0 3.33 2.76 5.7 5.69 5.7 3.14 0 5.69-2.55 5.69-5.7V9.01a7.35 7.35 0 0 0 4.3 1.38V7.3s-1.88.09-3.24-1.48Z"/></svg></a></div></div>
       <div><h4>Company</h4><ul><li><a href="#about">About us</a></li><li><a href="#projects">Projects</a></li><li><a href="#process">How we work</a></li><li><a href="#team">Our team</a></li></ul></div>
       <div><h4>Services</h4><ul><li><a href="#services">Building construction</a></li><li><a href="#services">Architecture &amp; design</a></li><li><a href="#services">Civil works</a></li><li><a href="#services">Concrete supply</a></li></ul></div>
       <div><h4>Contact</h4><ul><li>Gikondo, Kigali, Rwanda</li><li><a href="tel:+250782291551">0782 291 551</a> / <a href="tel:+250788620610">0788 620 610</a></li><li><a href="mailto:fortisgroupltd1@gmail.com">fortisgroupltd1@gmail.com</a></li><li>TIN 155740325</li></ul></div>
@@ -554,7 +581,9 @@ footer .f-about p{margin-top:16px;max-width:300px}
   /* hero slider */
   var slides=[].slice.call(document.querySelectorAll('.slide')),dots=document.getElementById('dots'),cur=0,timer;
   slides.forEach(function(_,i){var b=document.createElement('button');b.type='button';b.setAttribute('aria-label','Slide '+(i+1));b.addEventListener('click',function(){go(i,true);});dots.appendChild(b);});
-  var go=function(i,manual){slides[cur].classList.remove('on');dots.children[cur].classList.remove('on');cur=(i+slides.length)%slides.length;slides[cur].classList.add('on');dots.children[cur].classList.add('on');if(manual)start();};
+  var msgs=[].slice.call(document.querySelectorAll('.msg'));
+  var show=function(i,on){slides[i].classList.toggle('on',on);dots.children[i].classList.toggle('on',on);var m=msgs[i];if(m){m.classList.toggle('on',on);m.setAttribute('aria-hidden',String(!on));m.querySelectorAll('a').forEach(function(a){if(on)a.removeAttribute('tabindex');else a.setAttribute('tabindex','-1');});}};
+  var go=function(i,manual){show(cur,false);cur=(i+slides.length)%slides.length;show(cur,true);if(manual)start();};
   var start=function(){clearInterval(timer);if(!reduce)timer=setInterval(function(){go(cur+1);},6000);};
   dots.children[0].classList.add('on');
   document.getElementById('prev').addEventListener('click',function(){go(cur-1,true);});
