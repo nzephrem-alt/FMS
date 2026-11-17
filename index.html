@@ -185,12 +185,6 @@ dialog .close{position:absolute;right:10px;top:10px;width:36px;height:36px;borde
 .rental .wrap{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center}
 .rental .heading{text-align:left;margin:0}
 .rental .lead{margin-top:14px;font-size:16px;color:var(--body)}
-.machines{list-style:none;padding:0;margin:26px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.machines li{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);padding:14px 16px;font-family:Poppins,sans-serif;font-weight:600;font-size:15px;color:var(--ink)}
-.machines li span{flex:0 0 30px;height:30px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center}
-.machines li svg{width:16px;height:16px}
-.rental-perks{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:20px;font-size:14.5px}
-.rental-perks b{color:var(--ink)}
 .rental .acts{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px}
 .btn.line{background:#fff;color:var(--ink);border:1px solid var(--line)}
 .btn.line:hover{background:var(--ink);color:#fff}
@@ -210,12 +204,8 @@ dialog .close{position:absolute;right:10px;top:10px;width:36px;height:36px;borde
 .eq-arrow svg{width:18px;height:18px}
 .eq-arrow.prev{left:0}.eq-arrow.next{right:0;background:var(--dark)}
 .eq-arrow:hover{background:var(--accent-600)}
-.eq-thumbs{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
-.eq-thumbs button{background:#fff;border:2px solid transparent;padding:6px;cursor:pointer;transition:border-color .2s ease}
-.eq-thumbs button.on,.eq-thumbs button:hover{border-color:var(--accent)}
-.eq-thumbs img{width:100%;aspect-ratio:1;object-fit:contain;mix-blend-mode:multiply}
 @media (max-width:900px){.rental .wrap{grid-template-columns:1fr;gap:40px}.eq-slider{max-width:560px;width:100%;margin:0 auto}}
-@media (max-width:600px){.rental{padding:70px 0}.machines{grid-template-columns:1fr}.rental .acts .btn{flex:1 1 100%}.eq-stage{min-height:0}.eq-img{padding:24px 24px 6px}.eq-slide figcaption{padding:14px 22px 24px}.eq-slide h3{font-size:19px}}
+@media (max-width:600px){.rental{padding:70px 0}.rental .acts .btn{flex:1 1 100%}.eq-stage{min-height:0}.eq-img{padding:24px 24px 6px}.eq-slide figcaption{padding:14px 22px 24px}.eq-slide h3{font-size:19px}}
 .band li{background:rgba(255,255,255,.08);border-left:3px solid var(--accent);padding:14px 16px;font-family:Poppins,sans-serif;font-weight:500;font-size:16px;color:#fff}
 .band .btn{margin-top:24px}
 
@@ -522,13 +512,6 @@ footer .f-about p{margin-top:16px;max-width:300px}
     <div class="reveal">
       <div class="heading"><h2 id="rental-title">Equipment <span>Rental</span></h2></div>
       <p class="lead">Heavy-duty equipment, flexible rental. We provide reliable, well-maintained construction equipment for rent, saving you the cost of ownership while keeping your project on schedule.</p>
-      <ul class="machines">
-        <li><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>Concrete mixers</li>
-        <li><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>Vibratory rollers</li>
-        <li><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>Tamping rammers</li>
-        <li><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>Concrete vibrators</li>
-      </ul>
-      <div class="rental-perks"><span><b>Well-maintained</b> equipment</span><span><b>Flexible</b> rental</span><span><b>No</b> cost of ownership</span></div>
       <div class="acts">
         <a class="btn" href="https://wa.me/250788620610?text=Hello%20ISTA%20FORTIS%2C%20I%20would%20like%20to%20rent%20equipment." target="_blank" rel="noopener">Rent now on WhatsApp</a>
         <a class="btn line" href="tel:+250788620610">Call 0788 620 610</a>
@@ -559,7 +542,6 @@ footer .f-about p{margin-top:16px;max-width:300px}
         <button type="button" class="eq-arrow prev" aria-label="Previous equipment"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
         <button type="button" class="eq-arrow next" aria-label="Next equipment"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
       </div>
-      <div class="eq-thumbs"><button type="button" class="on" aria-label="Show Vibratory roller"><img src="/eq-roller.jpg" alt=""></button><button type="button" class="" aria-label="Show Concrete mixer"><img src="/eq-mixer.jpg" alt=""></button><button type="button" class="" aria-label="Show Tamping rammer"><img src="/eq-rammer.jpg" alt=""></button><button type="button" class="" aria-label="Show Concrete vibrator"><img src="/eq-vibrator.jpg" alt=""></button></div>
     </div>
   </div>
 </section>
@@ -676,16 +658,15 @@ footer .f-about p{margin-top:16px;max-width:300px}
   /* equipment slider */
   (function(){
     var root=document.getElementById('eqSlider'); if(!root) return;
-    var ss=[].slice.call(root.querySelectorAll('.eq-slide')), th=[].slice.call(root.querySelectorAll('.eq-thumbs button')), i=0, tm;
+    var ss=[].slice.call(root.querySelectorAll('.eq-slide')), i=0, tm;
     var set=function(n){
-      ss[i].classList.remove('on'); ss[i].setAttribute('aria-hidden','true'); ss[i].querySelector('a').setAttribute('tabindex','-1'); th[i].classList.remove('on');
+      ss[i].classList.remove('on'); ss[i].setAttribute('aria-hidden','true'); ss[i].querySelector('a').setAttribute('tabindex','-1'); 
       i=(n+ss.length)%ss.length;
-      ss[i].classList.add('on'); ss[i].setAttribute('aria-hidden','false'); ss[i].querySelector('a').removeAttribute('tabindex'); th[i].classList.add('on');
+      ss[i].classList.add('on'); ss[i].setAttribute('aria-hidden','false'); ss[i].querySelector('a').removeAttribute('tabindex'); 
     };
     var auto=function(){clearInterval(tm); if(!reduce) tm=setInterval(function(){set(i+1);},4500);};
     root.querySelector('.eq-arrow.prev').addEventListener('click',function(){set(i-1);auto();});
     root.querySelector('.eq-arrow.next').addEventListener('click',function(){set(i+1);auto();});
-    th.forEach(function(b,n){b.addEventListener('click',function(){set(n);auto();});});
     root.addEventListener('mouseenter',function(){clearInterval(tm);});
     root.addEventListener('mouseleave',auto);
     var x0=null; root.addEventListener('touchstart',function(e){x0=e.touches[0].clientX;},{passive:true});
